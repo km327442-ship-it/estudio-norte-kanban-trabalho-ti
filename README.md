@@ -1,0 +1,1 @@
+# estudio-norte-kanban-trabalho-ti
