@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#f3f5f0">
   <meta name="description" content="Acesse seu quadro de tarefas do Estúdio Norte.">
   <title>Entrar | Estúdio Norte</title>
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./script.js"></script>
 </head>
 <body>
   <main class="auth-layout" id="login-view">
@@ -32,26 +32,51 @@
     <section class="auth-form-panel" aria-labelledby="login-title">
       <div class="auth-form-wrap">
         <a class="mobile-brand" href="/" aria-label="Estúdio Norte, página inicial"><span class="brand-mark">N.</span><span class="brand-name">Estúdio Norte</span></a>
-        <p class="eyebrow">Acesso à conta</p>
-        <h2 id="login-title">Boas-vindas</h2>
-        <p class="form-intro">Entre com seu e-mail ou nome de usuário.</p>
-
-        <form id="login-form" class="login-form">
-          <div class="field">
-            <label for="username">E-mail ou nome de usuário</label>
-            <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="254" required>
-          </div>
-          <div class="field">
-            <label for="password">Senha</label>
-            <div class="password-wrap">
-              <input id="password" name="password" type="password" autocomplete="current-password" required>
-              <button id="toggle-password" class="password-toggle" type="button" aria-pressed="false" aria-label="Mostrar senha">Mostrar</button>
+        <div id="login-panel">
+          <p class="eyebrow">Acesso à conta</p>
+          <h2 id="login-title">Boas-vindas</h2>
+          <p class="form-intro">Entre com seu e-mail ou nome de usuário.</p>
+          <form id="login-form" class="login-form">
+            <div class="field">
+              <label for="username">E-mail</label>
+              <input id="username" name="username" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="254" required>
             </div>
-          </div>
-          <p id="auth-feedback" class="auth-feedback" role="status" aria-live="polite"></p>
-          <button class="primary-button login-submit" id="login-submit" type="submit"><span>Entrar</span><span aria-hidden="true">&#8594;</span></button>
-        </form>
-        <a class="home-link" href="/">Voltar à página inicial</a>
+            <div class="field">
+              <label for="password">Senha</label>
+              <div class="password-wrap">
+                <input id="password" name="password" type="password" autocomplete="current-password" required>
+                <button id="toggle-password" class="password-toggle" type="button" aria-pressed="false" aria-label="Mostrar senha">Mostrar</button>
+              </div>
+            </div>
+            <p id="auth-feedback" class="auth-feedback" role="status" aria-live="polite"></p>
+            <button class="primary-button login-submit" id="login-submit" type="submit"><span>Entrar</span><span aria-hidden="true">&#8594;</span></button>
+          </form>
+          <a class="home-link" href="/">Voltar à página inicial</a>
+          <p class="auth-switch">Ainda não tem conta? <button class="auth-switch-link" id="show-register" type="button">Criar conta</button></p>
+        </div>
+
+        <div id="register-panel" hidden>
+          <p class="eyebrow">Novo acesso</p>
+          <h2 id="register-title">Criar conta</h2>
+          <p class="form-intro">Escolha um usuário e uma senha para começar.</p>
+          <form id="register-form" class="register-form">
+            <div class="field">
+              <label for="register-username">E-mail</label>
+              <input id="register-username" name="username" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="254" required>
+            </div>
+            <div class="field">
+              <label for="register-password">Senha (mínimo de 6 caracteres)</label>
+              <input id="register-password" name="password" type="password" autocomplete="new-password" minlength="6" maxlength="1024" required>
+            </div>
+            <div class="field">
+              <label for="register-confirm-password">Confirmar senha</label>
+              <input id="register-confirm-password" name="confirm-password" type="password" autocomplete="new-password" minlength="6" maxlength="1024" required>
+            </div>
+            <p id="register-feedback" class="auth-feedback" role="status" aria-live="polite"></p>
+            <button class="primary-button login-submit" id="register-submit" type="submit"><span>Criar conta</span><span aria-hidden="true">&#8594;</span></button>
+          </form>
+          <button class="auth-switch-link back-to-login" id="show-login" type="button">Já tem uma conta? Entrar</button>
+        </div>
       </div>
       <footer class="auth-footer">Acesso protegido <span aria-hidden="true">·</span> Estúdio Norte</footer>
     </section>

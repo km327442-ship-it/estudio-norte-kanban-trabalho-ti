@@ -49,7 +49,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .auth-form-panel .eyebrow { margin-top: 0; }
 .auth-form-wrap h2 { margin: 0; font-size: 29px; font-weight: 650; }
 .form-intro { margin: 9px 0 30px; color: var(--muted); font-size: 13px; line-height: 1.5; }
-.login-form .field { margin-bottom: 19px; }
+.login-form .field, .register-form .field { margin-bottom: 19px; }
 .field { display: grid; gap: 8px; }
 .field label { font-size: 12px; font-weight: 650; }
 .field input, .field textarea { width: 100%; padding: 11px 12px; border: 1px solid #dfe5de; border-radius: 6px; color: var(--ink); background: #fff; font-size: 13px; }
@@ -65,6 +65,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .login-submit { width: 100%; min-height: 46px; justify-content: space-between; padding: 0 15px; }
 .home-link { display: inline-block; margin-top: 24px; color: #68756c; font-size: 12px; text-decoration-color: #c6cec6; text-underline-offset: 3px; }
 .home-link:hover { color: var(--green); }
+.auth-switch { margin: 20px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
+.auth-switch-link { padding: 3px 4px; border: 0; color: var(--green); background: transparent; cursor: pointer; font-size: 12px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.auth-switch-link:hover { color: var(--green-dark); }
+.back-to-login { margin-top: 13px; }
 .mobile-brand { display: none; }
 .auth-footer { margin-top: 34px; color: #929b93; font-size: 10px; text-align: center; }
 .auth-footer span { padding: 0 5px; color: #bac2bb; }
