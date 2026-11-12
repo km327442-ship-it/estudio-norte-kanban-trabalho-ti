@@ -4,14 +4,24 @@ import {
   getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  signOut
+  signOut,
+  updateProfile
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 import {
+  addDoc,
+  collection,
+  deleteDoc,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
+  onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
-  setDoc
+  setDoc,
+  updateDoc,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
 import firebaseConfig from "./firebase-config.js";
 
@@ -39,14 +49,24 @@ if (firebaseConfigured) {
 }
 
 export {
+  addDoc,
   auth,
+  collection,
   createUserWithEmailAndPassword,
+  deleteDoc,
   db,
   doc,
   getDoc,
+  getDocs,
   onAuthStateChanged,
+  onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
   setDoc,
   signInWithEmailAndPassword,
-  signOut
+  signOut,
+  updateDoc,
+  updateProfile,
+  writeBatch
 };

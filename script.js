@@ -1,15 +1,24 @@
 import {
+  addDoc,
   auth,
+  collection,
   createUserWithEmailAndPassword,
   db,
+  deleteDoc,
   doc,
   firebaseConfigured,
   getDoc,
   onAuthStateChanged,
+  onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
   setDoc,
   signInWithEmailAndPassword,
-  signOut
+  signOut,
+  updateDoc,
+  updateProfile,
+  writeBatch
 } from "./firebase.js";
 
 (() => {
@@ -17,12 +26,9 @@ import {
 
   const STATUSES = ["todo", "doing", "done"];
   const STATUS_LABELS = { todo: "A Fazer", doing: "Em Andamento", done: "Concluído" };
-  const starterTasks = [
-    { id: "sample-1", title: "Revisar briefing do projeto", description: "Alinhar objetivos e entregáveis com o time.", status: "todo", createdAt: new Date().toISOString() },
-    { id: "sample-2", title: "Organizar referências visuais", description: "Separar inspirações para a primeira rodada.", status: "todo", createdAt: new Date().toISOString() },
-    { id: "sample-3", title: "Desenhar fluxo de navegação", description: "Mapear os principais caminhos da experiência.", status: "doing", createdAt: new Date().toISOString() },
-    { id: "sample-4", title: "Definir escopo inicial", description: "Registrar o que entra na primeira entrega.", status: "done", createdAt: new Date().toISOString() }
-  ];
+  const PRIORITY_LABELS = { low: "Baixa", normal: "Normal", high: "Alta" };
+  const BOARD_ID = "quadro-principal";
+  const BOARD_PATH = `/board/${BOARD_ID}`;
   const loginView = document.querySelector("#login-view");
   const appView = document.querySelector("#app-view");
   const loginPanel = document.querySelector("#login-panel");
@@ -31,9 +37,12 @@ import {
   const usernameInput = document.querySelector("#username");
   const passwordInput = document.querySelector("#password");
   const loginButton = document.querySelector("#login-submit");
+  const showRegisterButton = document.querySelector("#show-register");
+  const showLoginButton = document.querySelector("#show-login");
   const authFeedback = document.querySelector("#auth-feedback");
   const registerForm = document.querySelector("#register-form");
   const registerUsernameInput = document.querySelector("#register-username");
+  const registerDisplayNameInput = document.querySelector("#register-display-name");
   const registerPasswordInput = document.querySelector("#register-password");
   const registerConfirmInput = document.querySelector("#register-confirm-password");
   const registerButton = document.querySelector("#register-submit");
@@ -43,10 +52,59 @@ import {
   const taskForm = document.querySelector("#task-form");
   const taskTitleInput = document.querySelector("#task-title-input");
   const taskDescriptionInput = document.querySelector("#task-description-input");
+  const taskPriorityInput = document.querySelector("#task-priority-input");
+  const taskAssigneeInput = document.querySelector("#task-assignee-input");
+  const taskDueDateInput = document.querySelector("#task-due-date-input");
   const toast = document.querySelector("#toast");
+  const taskDetailView = document.querySelector("#task-detail-view");
+  const taskCommentsList = document.querySelector("#task-comments");
+  const activityList = document.querySelector("#task-activity");
+  const commentForm = document.querySelector("#comment-form");
+  const commentInput = document.querySelector("#comment-input");
+  const mentionSuggestions = document.querySelector("#mention-suggestions");
+  const memberList = document.querySelector("#member-list");
+  const notificationList = document.querySelector("#notification-list");
   let currentUser = null;
+  let currentMember = null;
+  let editingTaskId = null;
   let tasks = [];
+  let members = [];
+  let notifications = [];
+  let activeComments = [];
+  let activeActivity = [];
+  let boardActivity = [];
+  let activeDetailTaskId = null;
   let toastTimer;
+  let unsubscribeTasks = null;
+  let unsubscribeBoardActivity = null;
+  let unsubscribeMembers = null;
+  let unsubscribeNotifications = null;
+  let unsubscribeComments = null;
+  let unsubscribeActivity = null;
+
+  function boardRef() { return doc(db, "boards", BOARD_ID); }
+  function membersRef() { return collection(db, "boards", BOARD_ID, "members"); }
+  function tasksRef() { return collection(db, "boards", BOARD_ID, "tasks"); }
+  function memberRef(uid) { return doc(db, "boards", BOARD_ID, "members", uid); }
+  function canEdit() { return ["admin", "editor"].includes(currentMember?.role); }
+  function isAdmin() { return currentMember?.role === "admin"; }
+  function getRoute() {
+    const match = window.location.pathname.match(/^\/board\/([^/]+)(?:\/task\/([^/]+))?\/?$/);
+    if (!match || match[1] !== BOARD_ID) return { taskId: null };
+    return { taskId: match[2] || null };
+  }
+
+  function stopListeners() {
+    [unsubscribeTasks, unsubscribeBoardActivity, unsubscribeMembers, unsubscribeNotifications, unsubscribeComments, unsubscribeActivity]
+      .forEach((unsubscribe) => unsubscribe?.());
+    unsubscribeTasks = null;
+    unsubscribeBoardActivity = null;
+    unsubscribeMembers = null;
+    unsubscribeNotifications = null;
+    unsubscribeComments = null;
+    unsubscribeActivity = null;
+    activeDetailTaskId = null;
+  }
 
   function setAuthFeedback(message = "", success = false) {
     authFeedback.textContent = message;
@@ -54,13 +112,26 @@ import {
   }
 
   function showLogin(message = "", success = false) {
+    stopListeners();
     currentUser = null;
+    currentMember = null;
     tasks = [];
+    members = [];
+    notifications = [];
+    boardActivity = [];
+    activeComments = [];
+    activeActivity = [];
     loginView.hidden = false;
     appView.hidden = true;
+    taskDetailView.hidden = true;
+    taskDetailView.replaceChildren();
     loginPanel.hidden = false;
     registerPanel.hidden = true;
     document.title = "Entrar | Estúdio Norte";
+    loginButton.disabled = !firebaseConfigured;
+    registerButton.disabled = !firebaseConfigured;
+    showRegisterButton.disabled = false;
+    showLoginButton.disabled = false;
     setAuthFeedback(message, success);
     registerFeedback.textContent = "";
   }
@@ -83,50 +154,91 @@ import {
     usernameInput.focus();
   }
 
-  function storageKey(username) {
-    return doc(db, "users", username, "kanban", "state");
+  function memberProfile(user, role) {
+    const displayName = user.displayName || user.email?.split("@")[0] || "Usuário";
+    const handle = makeHandle(user);
+    return { uid: user.uid, role, displayName, handle, photoURL: user.photoURL || "", joinedAt: serverTimestamp() };
   }
 
-  async function loadTasks(uid) {
-    const boardDocument = storageKey(uid);
-    const snapshot = await getDoc(boardDocument);
-    if (snapshot.exists()) {
-      const savedTasks = snapshot.data().tasks;
-      return Array.isArray(savedTasks)
-        ? savedTasks.filter((task) => task && typeof task.id === "string" && typeof task.title === "string" && STATUSES.includes(task.status))
-        : [];
-    }
-
-    const initialTasks = starterTasks.map((task) => ({ ...task }));
-    await setDoc(boardDocument, { tasks: initialTasks, updatedAt: serverTimestamp() });
-    return initialTasks;
+  function makeHandle(user) {
+    const base = (user.email?.split("@")[0] || "membro").toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 24);
+    return `${base || "membro"}-${user.uid.slice(0, 5).toLowerCase()}`;
   }
 
-  async function persistTasks() {
-    if (!currentUser || !db) return false;
-    try {
-      await setDoc(storageKey(currentUser.uid), { tasks, updatedAt: serverTimestamp() });
-      return true;
-    } catch {
-      showToast("Não foi possível salvar no Firestore.");
-      return false;
+  async function ensureBoardMembership(user) {
+    const [boardSnapshot, memberSnapshot] = await Promise.all([getDoc(boardRef()), getDoc(memberRef(user.uid))]);
+    if (memberSnapshot.exists()) {
+      await updateDoc(memberRef(user.uid), {
+        displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
+        handle: makeHandle(user),
+        photoURL: user.photoURL || ""
+      });
+      return;
     }
+
+    if (!boardSnapshot.exists()) {
+      const batch = writeBatch(db);
+      batch.set(boardRef(), { name: "Meu quadro colaborativo", createdBy: user.uid, createdAt: serverTimestamp() });
+      batch.set(memberRef(user.uid), memberProfile(user, "admin"));
+      try {
+        await batch.commit();
+        return;
+      } catch {
+        const [boardAfterRace, memberAfterRace] = await Promise.all([getDoc(boardRef()), getDoc(memberRef(user.uid))]);
+        if (!boardAfterRace.exists()) throw new Error("Não foi possível iniciar o quadro. Confira as regras do Firestore.");
+        if (memberAfterRace.exists()) return;
+      }
+    }
+
+    await setDoc(memberRef(user.uid), memberProfile(user, "reader"));
+  }
+
+  function subscribeToBoard(user) {
+    stopListeners();
+    const route = getRoute();
+    loginView.hidden = true;
+    appView.hidden = false;
+    taskDetailView.hidden = !route.taskId;
+    appView.hidden = Boolean(route.taskId);
+    document.title = route.taskId ? "Tarefa | Meu quadro" : "Meu quadro | Estúdio Norte";
+
+    unsubscribeMembers = onSnapshot(membersRef(), (snapshot) => {
+      members = snapshot.docs.map((entry) => ({ uid: entry.id, ...entry.data() }));
+      currentMember = members.find((item) => item.uid === user.uid) || null;
+      updateRoleControls();
+      render();
+      renderCurrentRoute();
+    }, () => showToast("Não foi possível carregar os membros do quadro."));
+
+    unsubscribeTasks = onSnapshot(query(tasksRef(), orderBy("createdAt", "desc")), (snapshot) => {
+      tasks = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      render();
+      renderCurrentRoute();
+    }, () => showToast("Não foi possível carregar tarefas. Confira as regras do Firestore."));
+
+    unsubscribeBoardActivity = onSnapshot(query(collection(db, "boards", BOARD_ID, "activity"), orderBy("createdAt", "desc")), (snapshot) => {
+      boardActivity = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      renderBoardActivity();
+    }, () => showToast("Não foi possível carregar a atividade recente."));
+
+    unsubscribeNotifications = onSnapshot(collection(db, "users", user.uid, "notifications"), (snapshot) => {
+      notifications = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }))
+        .sort((left, right) => (right.createdAt?.toMillis?.() || 0) - (left.createdAt?.toMillis?.() || 0));
+      renderNotifications();
+    }, () => showToast("Não foi possível carregar as notificações."));
+
+    if (route.taskId) watchTaskDetails(route.taskId);
   }
 
   async function enterApp(user) {
     currentUser = user;
-    document.querySelector("#user-name").textContent = user.email || user.uid;
-    loginView.hidden = true;
-    appView.hidden = false;
-    document.title = "Meu quadro | Estúdio Norte";
+    document.querySelector("#user-name").textContent = user.displayName || user.email || user.uid;
     setAuthFeedback();
     try {
-      tasks = await loadTasks(user.uid);
-      render();
+      await ensureBoardMembership(user);
+      subscribeToBoard(user);
     } catch {
-      tasks = [];
-      render();
-      showToast("Não foi possível carregar o quadro. Confira as regras do Firestore.");
+      showLogin("Não foi possível acessar o quadro. Confira as regras e o projeto Firebase.");
     }
   }
 
@@ -139,6 +251,7 @@ import {
     if (error.code === "auth/too-many-requests") return "Muitas tentativas. Aguarde e tente novamente.";
     if (error.code === "auth/network-request-failed") return "Sem conexão com o Firebase. Verifique a rede e tente novamente.";
     if (error.code === "permission-denied" || error.code === "firestore/permission-denied") return "Acesso negado pelo Firestore. Confira as regras publicadas.";
+    if (error.code === "auth/configuration-not-found") return "Ative E-mail/senha no Firebase Authentication.";
     return action === "register" ? "Não foi possível criar a conta. Confira a configuração do Firebase." : "Não foi possível entrar. Confira a configuração do Firebase.";
   }
 
@@ -150,44 +263,115 @@ import {
   }
 
   function formatDate(value) {
-    const date = new Date(value);
+    const date = value?.toDate?.() || new Date(value);
     if (Number.isNaN(date.getTime())) return "Adicionada recentemente";
-    return new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "short" }).format(date);
+    return new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
+  }
+
+  function formatDueDate(value) {
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(year, month - 1, day, 12);
+    return new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "short", year: "numeric" }).format(date);
+  }
+
+  function createAvatar(name, photoURL = "", extraClass = "") {
+    const avatar = createElement("span", `avatar ${extraClass}`.trim());
+    avatar.setAttribute("aria-hidden", "true");
+    if (photoURL) {
+      const image = document.createElement("img");
+      image.src = photoURL;
+      image.alt = "";
+      image.referrerPolicy = "no-referrer";
+      avatar.append(image);
+    } else {
+      avatar.textContent = (name || "?").trim().split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase();
+    }
+    return avatar;
+  }
+
+  function taskHref(taskId) {
+    return `${BOARD_PATH}/task/${encodeURIComponent(taskId)}`;
+  }
+
+  function makeTaskLink(task) {
+    const link = document.createElement("a");
+    link.className = "task-title-link";
+    link.href = taskHref(task.id);
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.append(createElement("h3", "task-title", task.title));
+    link.setAttribute("aria-label", `Abrir detalhes da tarefa: ${task.title} em nova aba`);
+    return link;
   }
 
   function createTaskCard(task) {
-    const card = createElement("article", "task-card");
-    card.draggable = true;
-    card.tabIndex = 0;
+    const card = createElement("article", `task-card${canEdit() ? " is-editable" : ""}`);
+    card.draggable = canEdit();
     card.dataset.taskId = task.id;
     card.setAttribute("role", "listitem");
-    card.setAttribute("aria-label", `${task.title}. Use as setas esquerda e direita para mover entre colunas.`);
     const top = createElement("div", "task-card-top");
-    top.append(createElement("h3", "task-title", task.title), createElement("span", "drag-mark", "⋮⋮"));
-    top.lastElementChild.setAttribute("aria-hidden", "true");
+    top.append(makeTaskLink(task));
+    const priority = createElement("span", `priority-tag priority-${task.priority || "normal"}`, PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.normal);
+    top.append(priority);
     card.append(top);
     if (task.description) card.append(createElement("p", "task-description", task.description));
+    const assignee = members.find((member) => member.uid === task.assigneeUid);
+    const assigneeRow = createElement("div", "task-assignee");
+    if (assignee) {
+      assigneeRow.append(createAvatar(assignee.displayName, assignee.photoURL));
+      assigneeRow.append(createElement("span", "assignee-name", assignee.displayName || assignee.handle));
+    } else {
+      assigneeRow.append(createAvatar("?"), createElement("span", "assignee-name unassigned", "Sem responsável"));
+    }
+    card.append(assigneeRow);
     const footer = createElement("div", "task-footer");
-    footer.append(createElement("span", "task-date", formatDate(task.createdAt)));
+    footer.append(createElement("span", "task-date", task.dueDate ? `Entrega ${formatDueDate(task.dueDate)}` : `Criada ${formatDate(task.createdAt)}`));
     const actions = createElement("div", "task-actions");
-    const status = document.createElement("select");
-    status.className = "task-status";
-    status.setAttribute("aria-label", `Mover ${task.title}`);
-    STATUSES.forEach((value) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = STATUS_LABELS[value];
-      option.selected = value === task.status;
-      status.append(option);
-    });
-    const remove = createElement("button", "delete-button", "×");
-    remove.type = "button";
-    remove.setAttribute("aria-label", `Excluir ${task.title}`);
-    remove.title = "Excluir tarefa";
-    actions.append(status, remove);
+    if (canEdit()) {
+      const status = document.createElement("select");
+      status.className = "task-status";
+      status.setAttribute("aria-label", `Mover ${task.title}`);
+      STATUSES.forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = STATUS_LABELS[value];
+        option.selected = value === task.status;
+        status.append(option);
+      });
+      const edit = createElement("button", "icon-button edit-button", "Editar");
+      edit.type = "button";
+      edit.setAttribute("aria-label", `Editar ${task.title}`);
+      edit.dataset.action = "edit";
+      const remove = createElement("button", "delete-button", "×");
+      remove.type = "button";
+      remove.dataset.action = "delete";
+      remove.setAttribute("aria-label", `Excluir ${task.title}`);
+      remove.title = "Excluir tarefa";
+      actions.append(status, edit, remove);
+    } else {
+      actions.append(createElement("span", "task-status-label", STATUS_LABELS[task.status] || STATUS_LABELS.todo));
+    }
     footer.append(actions);
     card.append(footer);
     return card;
+  }
+
+  function updateRoleControls() {
+    const roleLabel = { admin: "Administrador", editor: "Editor", reader: "Leitor" }[currentMember?.role] || "Sem acesso";
+    document.querySelector("#role-label").textContent = roleLabel;
+    document.querySelector("#open-task-dialog").hidden = !canEdit();
+    document.querySelector("#open-members-dialog").hidden = !isAdmin();
+    document.querySelector("#notification-button").hidden = !currentUser;
+    updateAssigneeOptions();
+    renderMembers();
+  }
+
+  function updateAssigneeOptions() {
+    if (!taskAssigneeInput) return;
+    const previousValue = taskAssigneeInput.value;
+    taskAssigneeInput.replaceChildren(new Option("Sem responsável", ""));
+    members.forEach((member) => taskAssigneeInput.append(new Option(member.displayName || member.handle || member.uid, member.uid)));
+    if ([...taskAssigneeInput.options].some((option) => option.value === previousValue)) taskAssigneeInput.value = previousValue;
   }
 
   function render() {
@@ -208,6 +392,50 @@ import {
       : `${counts.done} de ${total} ${total === 1 ? "concluída" : "concluídas"}`;
   }
 
+  function renderMembers() {
+    if (!memberList) return;
+    memberList.replaceChildren();
+    members.forEach((member) => {
+      const row = createElement("div", "member-row");
+      row.append(createAvatar(member.displayName, member.photoURL));
+      const identity = createElement("div", "member-identity");
+      identity.append(createElement("strong", "member-name", member.displayName || "Membro"));
+      identity.append(createElement("span", "member-handle", `@${member.handle || member.uid.slice(0, 8)}`));
+      row.append(identity);
+      if (isAdmin() && member.uid !== currentUser.uid) {
+        const roleSelect = document.createElement("select");
+        roleSelect.className = "member-role-select";
+        roleSelect.dataset.memberUid = member.uid;
+        [["editor", "Editor"], ["reader", "Leitor"]].forEach(([value, label]) => roleSelect.append(new Option(label, value)));
+        roleSelect.value = member.role === "editor" ? "editor" : "reader";
+        roleSelect.setAttribute("aria-label", `Permissão de ${member.displayName || member.handle}`);
+        row.append(roleSelect);
+      } else {
+        row.append(createElement("span", "member-role", { admin: "Administrador", editor: "Editor", reader: "Leitor" }[member.role] || "Leitor"));
+      }
+      memberList.append(row);
+    });
+  }
+
+  function renderNotifications() {
+    const unread = notifications.filter((notification) => !notification.read).length;
+    document.querySelector("#notification-count").textContent = unread ? String(unread) : "";
+    notificationList.replaceChildren();
+    if (!notifications.length) notificationList.append(createElement("p", "empty-state", "Nenhuma notificação."));
+    notifications.forEach((notification) => {
+      const row = createElement("a", `notification-item${notification.read ? "" : " is-unread"}`);
+      row.href = notification.taskId ? taskHref(notification.taskId) : BOARD_PATH;
+      row.target = "_blank";
+      row.rel = "noopener noreferrer";
+      row.append(createElement("span", "notification-message", notification.message || "Atualização no quadro"));
+      row.append(createElement("time", "notification-date", formatDate(notification.createdAt)));
+      row.addEventListener("click", () => {
+        if (!notification.read) void updateDoc(doc(db, "users", currentUser.uid, "notifications", notification.id), { read: true });
+      });
+      notificationList.append(row);
+    });
+  }
+
   function showToast(message) {
     window.clearTimeout(toastTimer);
     toast.textContent = message;
@@ -215,14 +443,279 @@ import {
     toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2400);
   }
 
+  function taskRef(taskId) { return doc(db, "boards", BOARD_ID, "tasks", taskId); }
+  function taskCommentsRef(taskId) { return collection(db, "boards", BOARD_ID, "tasks", taskId, "comments"); }
+  function taskActivityRef(taskId) { return collection(db, "boards", BOARD_ID, "tasks", taskId, "activity"); }
+
+  async function writeActivity(task, type, previousValue = null, newValue = null) {
+    const activity = {
+      boardId: BOARD_ID,
+      taskId: task.id,
+      taskTitle: task.title,
+      actorUid: currentUser.uid,
+      actorName: currentUser.displayName || currentUser.email || "Usuário",
+      actorPhotoURL: currentUser.photoURL || "",
+      type,
+      previousValue,
+      newValue,
+      createdAt: serverTimestamp()
+    };
+    await Promise.all([
+      addDoc(collection(db, "boards", BOARD_ID, "activity"), activity),
+      addDoc(taskActivityRef(task.id), activity)
+    ]);
+  }
+
+  async function sendNotifications(userIds, type, task, message) {
+    const recipients = [...new Set(userIds)].filter((uid) => uid && uid !== currentUser.uid);
+    await Promise.all(recipients.map((uid) => addDoc(collection(db, "users", uid, "notifications"), {
+      boardId: BOARD_ID,
+      taskId: task.id,
+      taskTitle: task.title,
+      actorUid: currentUser.uid,
+      actorName: currentUser.displayName || currentUser.email || "Usuário",
+      type,
+      message,
+      read: false,
+      createdAt: serverTimestamp()
+    })));
+  }
+
+  async function updateTask(task, changes, activityType, previousValue, newValue, notice) {
+    if (!canEdit()) return;
+    await updateDoc(taskRef(task.id), { ...changes, updatedAt: serverTimestamp(), updatedBy: currentUser.uid });
+    const updatedTask = { ...task, ...changes };
+    await writeActivity(updatedTask, activityType, previousValue, newValue);
+    if (notice) {
+      const recipients = activityType === "assigned" ? [changes.assigneeUid] : members.map((member) => member.uid);
+      await sendNotifications(recipients, activityType, updatedTask, notice);
+    }
+  }
+
   async function moveTask(id, status) {
-    if (!STATUSES.includes(status)) return;
+    if (!canEdit() || !STATUSES.includes(status)) return;
     const task = tasks.find((item) => item.id === id);
     if (!task || task.status === status) return;
-    task.status = status;
-    const saved = await persistTasks();
-    render();
-    if (saved) showToast(`Tarefa movida para ${STATUS_LABELS[status]}.`);
+    try {
+      await updateTask(task, { status }, "status_changed", task.status, status, `${task.title}: status alterado para ${STATUS_LABELS[status]}.`);
+      showToast(`Tarefa movida para ${STATUS_LABELS[status]}.`);
+    } catch {
+      showToast("Não foi possível atualizar o status. Confira as permissões do quadro.");
+    }
+  }
+
+  function setTaskRoute(taskId = null, replace = false) {
+    const url = taskId ? taskHref(taskId) : BOARD_PATH;
+    if (replace) history.replaceState({}, "", url);
+    else history.pushState({}, "", url);
+    renderCurrentRoute();
+  }
+
+  function openTaskEditor(task = null) {
+    if (!canEdit()) return;
+    editingTaskId = task?.id || null;
+    taskForm.reset();
+    document.querySelector("#dialog-title").textContent = task ? "Editar tarefa" : "Nova tarefa";
+    taskForm.querySelector("button[type='submit']").textContent = task ? "Salvar alterações" : "Criar tarefa";
+    taskTitleInput.value = task?.title || "";
+    taskDescriptionInput.value = task?.description || "";
+    taskPriorityInput.value = task?.priority || "normal";
+    taskDueDateInput.value = task?.dueDate || "";
+    updateAssigneeOptions();
+    taskAssigneeInput.value = task?.assigneeUid || "";
+    dialog.showModal();
+    taskTitleInput.focus();
+  }
+
+  function renderMentionedText(container, text) {
+    const mentionPattern = /@([a-z0-9._-]+)/gi;
+    let cursor = 0;
+    for (const match of text.matchAll(mentionPattern)) {
+      const start = match.index;
+      container.append(document.createTextNode(text.slice(cursor, start)));
+      const mention = createElement("strong", "mention-text", `@${match[1]}`);
+      container.append(mention);
+      cursor = start + match[0].length;
+    }
+    container.append(document.createTextNode(text.slice(cursor)));
+  }
+
+  function renderTaskDetails(task) {
+    taskDetailView.replaceChildren();
+    const header = createElement("header", "detail-header");
+    const back = createElement("a", "detail-back", "← Voltar ao quadro");
+    back.href = BOARD_PATH;
+    back.addEventListener("click", (event) => { event.preventDefault(); setTaskRoute(); });
+    const copyLink = createElement("button", "secondary-button", "Copiar link");
+    copyLink.type = "button";
+    copyLink.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(new URL(taskHref(task.id), location.origin).href); showToast("Link copiado."); }
+      catch { showToast("Não foi possível copiar o link neste navegador."); }
+    });
+    header.append(back, copyLink);
+    const article = createElement("article", "detail-article");
+    article.append(createElement("p", "eyebrow", "Tarefa do quadro"));
+    article.append(createElement("h1", "detail-title", task.title));
+    if (task.description) article.append(createElement("p", "detail-description", task.description));
+    const details = createElement("div", "detail-meta");
+    details.append(createElement("span", "detail-status", STATUS_LABELS[task.status] || STATUS_LABELS.todo));
+    details.append(createElement("span", `priority-tag priority-${task.priority || "normal"}`, `Prioridade ${PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.normal}`));
+    const assignee = members.find((member) => member.uid === task.assigneeUid);
+    details.append(createElement("span", "detail-assignee", assignee ? `Responsável: ${assignee.displayName}` : "Sem responsável"));
+    if (task.dueDate) details.append(createElement("span", "detail-assignee", `Entrega: ${formatDueDate(task.dueDate)}`));
+    article.append(details);
+    if (canEdit()) {
+      const edit = createElement("button", "primary-button", "Editar tarefa");
+      edit.type = "button";
+      edit.addEventListener("click", () => openTaskEditor(task));
+      article.append(edit);
+    }
+    const commentsSection = createElement("section", "detail-section");
+    commentsSection.append(createElement("h2", "section-title", `Comentários (${activeComments.length})`));
+    commentsSection.append(taskCommentsList);
+    commentsSection.append(commentForm);
+    const activitySection = createElement("section", "detail-section");
+    activitySection.append(createElement("h2", "section-title", "Histórico de atividade"), activityList);
+    taskDetailView.append(header, article, commentsSection, activitySection);
+    renderComments();
+    renderActivity();
+  }
+
+  function renderComments() {
+    taskCommentsList.replaceChildren();
+    activeComments.forEach((comment) => {
+      const row = createElement("article", "comment-item");
+      const avatar = createAvatar(comment.authorName, comment.authorPhotoURL);
+      const body = createElement("div", "comment-body");
+      const header = createElement("div", "comment-header");
+      header.append(createElement("strong", "comment-author", comment.authorName || "Usuário"));
+      header.append(createElement("time", "comment-date", formatDate(comment.createdAt)));
+      const content = createElement("p", "comment-content");
+      renderMentionedText(content, comment.content || "");
+      body.append(header, content);
+      row.append(avatar, body);
+      taskCommentsList.append(row);
+    });
+    commentForm.hidden = !canEdit();
+    if (canEdit()) renderMentionSuggestions();
+  }
+
+  function renderMentionSuggestions() {
+    if (!mentionSuggestions || !commentInput) return;
+    const beforeCursor = commentInput.value.slice(0, commentInput.selectionStart);
+    const match = beforeCursor.match(/(?:^|\s)@([a-z0-9._-]*)$/i);
+    mentionSuggestions.replaceChildren();
+    if (!match) { mentionSuggestions.hidden = true; return; }
+    const prefix = match[1].toLowerCase();
+    const suggestions = members.filter((member) => member.uid !== currentUser.uid && member.handle?.startsWith(prefix)).slice(0, 6);
+    if (!suggestions.length) { mentionSuggestions.hidden = true; return; }
+    suggestions.forEach((member) => {
+      const option = createElement("button", "mention-option");
+      option.type = "button";
+      option.setAttribute("role", "option");
+      option.append(createAvatar(member.displayName, member.photoURL, "avatar-small"));
+      option.append(createElement("span", "mention-option-name", `${member.displayName} · @${member.handle}`));
+      option.addEventListener("click", () => {
+        const cursor = commentInput.selectionStart;
+        const source = commentInput.value;
+        const start = source.slice(0, cursor).search(/(?:^|\s)@[a-z0-9._-]*$/i);
+        const insertionStart = start < 0 ? cursor : start + (source[start] === " " ? 1 : 0);
+        const nextValue = `${source.slice(0, insertionStart)}@${member.handle} ${source.slice(cursor)}`;
+        commentInput.value = nextValue;
+        const nextCursor = insertionStart + member.handle.length + 2;
+        commentInput.setSelectionRange(nextCursor, nextCursor);
+        mentionSuggestions.hidden = true;
+        commentInput.focus();
+      });
+      mentionSuggestions.append(option);
+    });
+    mentionSuggestions.hidden = false;
+  }
+
+  function renderActivity() {
+    activityList.replaceChildren();
+    activeActivity.forEach((item) => activityList.append(createActivityRow(item, false)));
+  }
+
+  function activityDescription(item) {
+    const oldAssignee = members.find((member) => member.uid === item.previousValue?.assigneeUid)?.displayName || "Sem responsável";
+    const newAssignee = members.find((member) => member.uid === item.newValue?.assigneeUid)?.displayName || "Sem responsável";
+    const messages = {
+      created: `criou “${item.taskTitle}”`,
+      status_changed: `alterou o status de “${item.taskTitle}”: ${STATUS_LABELS[item.previousValue] || item.previousValue} → ${STATUS_LABELS[item.newValue] || item.newValue}`,
+      assigned: `alterou o responsável de “${item.taskTitle}”: ${oldAssignee} → ${newAssignee}`,
+      priority_changed: `alterou a prioridade de “${item.taskTitle}”: ${PRIORITY_LABELS[item.previousValue?.priority] || item.previousValue?.priority} → ${PRIORITY_LABELS[item.newValue?.priority] || item.newValue?.priority}`,
+      edited: `editou “${item.taskTitle}”`,
+      comment: `comentou em “${item.taskTitle}”`,
+      role_changed: `alterou a permissão de um membro: ${item.previousValue} → ${item.newValue}`,
+      deleted: `excluiu “${item.taskTitle}”`
+    };
+    return `${item.actorName || "Usuário"} ${messages[item.type] || "atualizou o quadro"}.`;
+  }
+
+  function createActivityRow(item, linkTask) {
+    const row = createElement("article", "activity-item");
+    row.append(createAvatar(item.actorName, item.actorPhotoURL, "avatar-small"));
+    const text = createElement("div", "activity-copy");
+    const message = createElement("p", "activity-message", activityDescription(item));
+    if (linkTask && item.taskId) {
+      const link = createElement("a", "activity-task-link", "Abrir tarefa");
+      link.href = taskHref(item.taskId);
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      text.append(message, link);
+    } else {
+      text.append(message);
+    }
+    text.append(createElement("time", "activity-date", formatDate(item.createdAt)));
+    row.append(text);
+    return row;
+  }
+
+  function renderBoardActivity() {
+    const list = document.querySelector("#board-activity");
+    list.replaceChildren();
+    if (!boardActivity.length) list.append(createElement("p", "empty-state", "Nenhuma atividade registrada ainda."));
+    boardActivity.forEach((item) => list.append(createActivityRow(item, true)));
+  }
+
+  function renderCurrentRoute() {
+    if (!currentUser) return;
+    const route = getRoute();
+    const task = route.taskId ? tasks.find((item) => item.id === route.taskId) : null;
+    appView.hidden = Boolean(route.taskId);
+    taskDetailView.hidden = !route.taskId;
+    if (!route.taskId) {
+      if (unsubscribeComments) { unsubscribeComments(); unsubscribeComments = null; }
+      if (unsubscribeActivity) { unsubscribeActivity(); unsubscribeActivity = null; }
+      activeDetailTaskId = null;
+      document.title = "Meu quadro | Estúdio Norte";
+      return;
+    }
+    document.title = task ? `${task.title} | Meu quadro` : "Tarefa | Meu quadro";
+    if (!task) {
+      taskDetailView.replaceChildren(createElement("p", "empty-state", "Tarefa não encontrada ou sem acesso."));
+      return;
+    }
+    if (activeDetailTaskId !== task.id) watchTaskDetails(task.id);
+    renderTaskDetails(task);
+  }
+
+  function watchTaskDetails(taskId) {
+    if (activeDetailTaskId === taskId) return;
+    unsubscribeComments?.();
+    unsubscribeActivity?.();
+    activeDetailTaskId = taskId;
+    unsubscribeComments = onSnapshot(query(taskCommentsRef(taskId), orderBy("createdAt", "asc")), (snapshot) => {
+      activeComments = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) renderTaskDetails(task);
+    }, () => showToast("Não foi possível carregar os comentários."));
+    unsubscribeActivity = onSnapshot(query(taskActivityRef(taskId), orderBy("createdAt", "desc")), (snapshot) => {
+      activeActivity = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      const task = tasks.find((item) => item.id === taskId);
+      if (task) renderTaskDetails(task);
+    }, () => showToast("Não foi possível carregar o histórico."));
   }
 
   document.querySelector("#current-date").textContent = new Intl.DateTimeFormat("pt-BR", {
@@ -256,8 +749,8 @@ import {
     }
   });
 
-  document.querySelector("#show-register").addEventListener("click", showRegisterForm);
-  document.querySelector("#show-login").addEventListener("click", showLoginForm);
+  showRegisterButton.addEventListener("click", showRegisterForm);
+  showLoginButton.addEventListener("click", showLoginForm);
 
   registerForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -277,7 +770,12 @@ import {
     registerButton.querySelector("span").textContent = "Criando conta...";
     registerFeedback.textContent = "";
     try {
-      await createUserWithEmailAndPassword(auth, registerUsernameInput.value.trim(), registerPasswordInput.value);
+      const credential = await createUserWithEmailAndPassword(auth, registerUsernameInput.value.trim(), registerPasswordInput.value);
+      const displayName = registerDisplayNameInput.value.trim();
+      if (displayName) {
+        await updateProfile(credential.user, { displayName });
+        await ensureBoardMembership(credential.user);
+      }
       registerForm.reset();
     } catch (error) {
       registerFeedback.textContent = authErrorMessage(error, "register");
@@ -286,6 +784,79 @@ import {
       registerButton.querySelector("span").textContent = "Criar conta";
     }
   });
+
+  document.querySelector("#open-members-dialog").addEventListener("click", () => {
+    if (isAdmin()) document.querySelector("#members-dialog").showModal();
+  });
+  document.querySelector("#close-members-dialog").addEventListener("click", () => document.querySelector("#members-dialog").close());
+  document.querySelector("#notification-button").addEventListener("click", () => {
+    const panel = document.querySelector("#notification-panel");
+    panel.hidden = !panel.hidden;
+  });
+  memberList.addEventListener("change", async (event) => {
+    if (!isAdmin() || !event.target.matches(".member-role-select")) return;
+    const uid = event.target.dataset.memberUid;
+    const previousRole = members.find((member) => member.uid === uid)?.role;
+    const newRole = event.target.value;
+    if (!uid || !["reader", "editor"].includes(newRole)) return;
+    try {
+      await updateDoc(memberRef(uid), { role: newRole });
+      const eventData = {
+        boardId: BOARD_ID,
+        taskId: null,
+        taskTitle: "Quadro colaborativo",
+        actorUid: currentUser.uid,
+        actorName: currentUser.displayName || currentUser.email || "Administrador",
+        actorPhotoURL: currentUser.photoURL || "",
+        type: "role_changed",
+        previousValue: previousRole,
+        newValue: newRole,
+        targetUid: uid,
+        createdAt: serverTimestamp()
+      };
+      await Promise.all([
+        addDoc(collection(db, "boards", BOARD_ID, "activity"), eventData),
+        sendNotifications([uid], "role_changed", { id: null, title: "Quadro colaborativo" }, `Seu acesso foi alterado para ${newRole === "editor" ? "Editor" : "Leitor"}.`)
+      ]);
+      showToast("Permissão atualizada.");
+    } catch {
+      showToast("Não foi possível alterar a permissão.");
+    }
+  });
+
+  commentInput.addEventListener("input", renderMentionSuggestions);
+  commentInput.addEventListener("click", renderMentionSuggestions);
+  commentForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!canEdit() || !currentUser || !activeDetailTaskId) return;
+    const content = commentInput.value.trim();
+    if (!content) return;
+    const task = tasks.find((item) => item.id === activeDetailTaskId);
+    if (!task) return;
+    const mentionedHandles = [...content.matchAll(/@([a-z0-9._-]+)/gi)].map((match) => match[1].toLowerCase());
+    const mentionedMembers = members.filter((member) => mentionedHandles.includes(member.handle));
+    try {
+      await addDoc(taskCommentsRef(task.id), {
+        taskId: task.id,
+        authorUid: currentUser.uid,
+        authorName: currentUser.displayName || currentUser.email || "Usuário",
+        authorPhotoURL: currentUser.photoURL || "",
+        content,
+        mentions: mentionedMembers.map((member) => member.uid),
+        createdAt: serverTimestamp()
+      });
+      await writeActivity(task, "comment", null, content);
+      const mentionedUids = new Set(mentionedMembers.map((member) => member.uid));
+      await sendNotifications(members.filter((member) => !mentionedUids.has(member.uid)).map((member) => member.uid), "comment", task, `${currentUser.displayName || currentUser.email} comentou em “${task.title}”.`);
+      if (mentionedMembers.length) await sendNotifications(mentionedMembers.map((member) => member.uid), "mention", task, `${currentUser.displayName || currentUser.email} mencionou você em “${task.title}”.`);
+      commentForm.reset();
+      mentionSuggestions.hidden = true;
+    } catch {
+      showToast("Não foi possível publicar o comentário. Confira as permissões do quadro.");
+    }
+  });
+
+  window.addEventListener("popstate", renderCurrentRoute);
 
   document.querySelector("#logout-button").addEventListener("click", async () => {
     const button = document.querySelector("#logout-button");
@@ -301,44 +872,104 @@ import {
     }
   });
 
-  document.querySelector("#open-task-dialog").addEventListener("click", () => {
-    taskForm.reset();
-    dialog.showModal();
-    taskTitleInput.focus();
-  });
+  document.querySelector("#open-task-dialog").addEventListener("click", () => openTaskEditor());
   document.querySelector("#close-task-dialog").addEventListener("click", () => dialog.close());
   document.querySelector("#cancel-task").addEventListener("click", () => dialog.close());
   taskForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!canEdit() || !currentUser) return;
     const title = taskTitleInput.value.trim();
     if (!title) { taskTitleInput.focus(); return; }
-    tasks.unshift({
-      id: globalThis.crypto?.randomUUID?.() || `task-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      title,
-      description: taskDescriptionInput.value.trim(),
-      status: "todo",
-      createdAt: new Date().toISOString()
-    });
-    const saved = await persistTasks();
-    render();
-    dialog.close();
-    if (saved) showToast("Tarefa adicionada ao quadro.");
+    const description = taskDescriptionInput.value.trim();
+    const priority = taskPriorityInput.value;
+    const assigneeUid = taskAssigneeInput.value || null;
+    const dueDate = taskDueDateInput.value || null;
+    try {
+      if (editingTaskId) {
+        const existing = tasks.find((task) => task.id === editingTaskId);
+        if (!existing) throw new Error("Tarefa não encontrada.");
+        const changes = { title, description, priority, assigneeUid, dueDate };
+        const assignedMember = members.find((member) => member.uid === assigneeUid);
+        const assignmentChanged = existing.assigneeUid !== assigneeUid;
+        const priorityChanged = priority !== existing.priority;
+        const activityType = assignmentChanged ? "assigned" : priorityChanged ? "priority_changed" : "edited";
+        const notice = assignmentChanged && assignedMember
+          ? `${assignedMember.displayName} foi atribuído(a) a “${title}”.`
+          : priorityChanged ? `A prioridade de “${title}” foi alterada.` : null;
+        await updateTask(existing, changes, activityType, {
+          title: existing.title,
+          description: existing.description,
+          priority: existing.priority,
+          assigneeUid: existing.assigneeUid,
+          dueDate: existing.dueDate || null
+        }, changes, notice);
+        showToast("Tarefa atualizada.");
+      } else {
+        const reference = doc(tasksRef());
+        const newTask = {
+          id: reference.id,
+          title,
+          description,
+          status: "todo",
+          priority,
+          assigneeUid,
+          dueDate,
+          createdBy: currentUser.uid,
+          updatedBy: currentUser.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        };
+        await setDoc(reference, newTask);
+        await writeActivity(newTask, "created", null, {
+          title: newTask.title,
+          description: newTask.description,
+          status: newTask.status,
+          priority: newTask.priority,
+          assigneeUid: newTask.assigneeUid,
+          dueDate: newTask.dueDate
+        });
+        const assignedMember = members.find((member) => member.uid === assigneeUid);
+        if (assignedMember) await sendNotifications([assigneeUid], "assigned", newTask, `Você foi atribuído(a) a “${title}”.`);
+        showToast("Tarefa adicionada ao quadro.");
+      }
+      taskForm.reset();
+      editingTaskId = null;
+      dialog.close();
+    } catch (error) {
+      showToast(authErrorMessage(error, "task"));
+    }
   });
 
   board.addEventListener("click", async (event) => {
-    const button = event.target.closest(".delete-button");
-    if (!button) return;
+    const button = event.target.closest("[data-action]");
+    if (!button || !canEdit()) return;
     const card = button.closest("[data-task-id]");
-    tasks = tasks.filter((task) => task.id !== card.dataset.taskId);
-    await persistTasks();
-    render();
-    showToast("Tarefa excluída.");
+    const task = tasks.find((item) => item.id === card.dataset.taskId);
+    if (!task) return;
+    if (button.dataset.action === "edit") { openTaskEditor(task); return; }
+    if (button.dataset.action === "delete" && window.confirm(`Excluir “${task.title}”?`)) {
+      try {
+        await writeActivity(task, "deleted", {
+          title: task.title,
+          description: task.description,
+          status: task.status,
+          priority: task.priority,
+          assigneeUid: task.assigneeUid,
+          dueDate: task.dueDate
+        }, null);
+        await deleteDoc(taskRef(task.id));
+        await sendNotifications(members.map((member) => member.uid), "deleted", task, `A tarefa “${task.title}” foi excluída.`);
+        showToast("Tarefa excluída.");
+      } catch {
+        showToast("Não foi possível excluir a tarefa. Confira as permissões do quadro.");
+      }
+    }
   });
   board.addEventListener("change", (event) => {
     if (event.target.matches(".task-status")) void moveTask(event.target.closest("[data-task-id]").dataset.taskId, event.target.value);
   });
   board.addEventListener("keydown", (event) => {
-    if (!event.target.matches(".task-card") || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    if (!canEdit() || !event.target.matches(".task-card") || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     event.preventDefault();
     const task = tasks.find((item) => item.id === event.target.dataset.taskId);
     const nextIndex = STATUSES.indexOf(task.status) + (event.key === "ArrowRight" ? 1 : -1);
@@ -381,6 +1012,8 @@ import {
     registerFeedback.textContent = setupMessage;
     loginButton.disabled = true;
     registerButton.disabled = true;
+    showRegisterButton.disabled = false;
+    showLoginButton.disabled = false;
   } else {
     onAuthStateChanged(auth, (user) => {
       if (user) void enterApp(user);
