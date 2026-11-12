@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f5f0">
+  <meta name="description" content="Acesse seu quadro de tarefas do Estúdio Norte.">
+  <title>Entrar | Estúdio Norte</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="auth-layout" id="login-view">
+    <section class="auth-brand-panel" aria-labelledby="brand-title">
+      <a class="brand brand-on-dark" href="/" aria-label="Estúdio Norte, página inicial">
+        <span class="brand-mark" aria-hidden="true">N.</span>
+        <span class="brand-name">Estúdio Norte</span>
+      </a>
+      <div class="auth-brand-copy">
+        <p class="eyebrow eyebrow-light">Seu espaço de trabalho</p>
+        <h1 id="brand-title">Ideias claras.<br>Projetos em movimento.</h1>
+        <p>Entre para acompanhar suas tarefas e manter o trabalho fluindo.</p>
+      </div>
+      <div class="auth-board-art" aria-hidden="true">
+        <div class="art-column"><span></span><i></i><i></i></div>
+        <div class="art-column art-column-active"><span></span><i></i><i></i></div>
+        <div class="art-column"><span></span><i></i></div>
+      </div>
+      <span class="auth-panel-foot">ESTÚDIO NORTE <span>·</span> ORGANIZAÇÃO CRIATIVA</span>
+    </section>
+
+    <section class="auth-form-panel" aria-labelledby="login-title">
+      <div class="auth-form-wrap">
+        <a class="mobile-brand" href="/" aria-label="Estúdio Norte, página inicial"><span class="brand-mark">N.</span><span class="brand-name">Estúdio Norte</span></a>
+        <p class="eyebrow">Acesso à conta</p>
+        <h2 id="login-title">Boas-vindas</h2>
+        <p class="form-intro">Entre com seu e-mail ou nome de usuário.</p>
+
+        <form id="login-form" class="login-form">
+          <div class="field">
+            <label for="username">E-mail ou nome de usuário</label>
+            <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="254" required>
+          </div>
+          <div class="field">
+            <label for="password">Senha</label>
+            <div class="password-wrap">
+              <input id="password" name="password" type="password" autocomplete="current-password" required>
+              <button id="toggle-password" class="password-toggle" type="button" aria-pressed="false" aria-label="Mostrar senha">Mostrar</button>
+            </div>
+          </div>
+          <p id="auth-feedback" class="auth-feedback" role="status" aria-live="polite"></p>
+          <button class="primary-button login-submit" id="login-submit" type="submit"><span>Entrar</span><span aria-hidden="true">&#8594;</span></button>
+        </form>
+        <a class="home-link" href="/">Voltar à página inicial</a>
+      </div>
+      <footer class="auth-footer">Acesso protegido <span aria-hidden="true">·</span> Estúdio Norte</footer>
+    </section>
+  </main>
+
+  <div class="app-view" id="app-view" hidden>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Estúdio Norte, página inicial">
+          <span class="brand-mark" aria-hidden="true">N.</span>
+          <span class="brand-copy"><span class="brand-name">Estúdio Norte</span><span class="brand-caption">Workspace de projetos</span></span>
+        </a>
+        <div class="topbar-right"><span class="online-dot" aria-hidden="true"></span><span id="user-name"></span><button class="logout-button" id="logout-button" type="button">Sair</button></div>
+      </header>
+
+      <main class="board-main">
+        <section class="page-heading" aria-labelledby="page-title">
+          <div><p class="eyebrow">Visão geral</p><h1 id="page-title">Meu quadro</h1><p class="page-subtitle" id="current-date"></p></div>
+          <button class="primary-button" id="open-task-dialog" type="button"><span class="plus" aria-hidden="true">+</span> Adicionar nova tarefa</button>
+        </section>
+        <div class="board-summary" aria-live="polite"><span class="summary-count" id="total-count">0 tarefas</span><span class="summary-divider" aria-hidden="true"></span><span id="progress-summary">Tudo em ordem</span></div>
+        <section class="board" id="board" aria-label="Quadro Kanban">
+          <section class="kanban-column" data-status="todo" aria-labelledby="heading-todo">
+            <header class="column-heading"><div class="column-title-wrap"><span class="column-marker" aria-hidden="true"></span><h2 class="column-title" id="heading-todo">A Fazer</h2></div><span class="column-count" data-count="todo">0</span></header>
+            <div class="task-list" data-list="todo" role="list" aria-label="Tarefas a fazer"></div>
+          </section>
+          <section class="kanban-column" data-status="doing" aria-labelledby="heading-doing">
+            <header class="column-heading"><div class="column-title-wrap"><span class="column-marker" aria-hidden="true"></span><h2 class="column-title" id="heading-doing">Em Andamento</h2></div><span class="column-count" data-count="doing">0</span></header>
+            <div class="task-list" data-list="doing" role="list" aria-label="Tarefas em andamento"></div>
+          </section>
+          <section class="kanban-column" data-status="done" aria-labelledby="heading-done">
+            <header class="column-heading"><div class="column-title-wrap"><span class="column-marker" aria-hidden="true"></span><h2 class="column-title" id="heading-done">Concluído</h2></div><span class="column-count" data-count="done">0</span></header>
+            <div class="task-list" data-list="done" role="list" aria-label="Tarefas concluídas"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="task-dialog" aria-labelledby="dialog-title">
+    <form class="dialog-content" id="task-form">
+      <div class="dialog-header"><div><h2 id="dialog-title">Nova tarefa</h2><p>Adicione uma atividade ao seu quadro.</p></div><button class="close-button" id="close-task-dialog" type="button" aria-label="Fechar">&times;</button></div>
+      <div class="field"><label for="task-title-input">Título</label><input id="task-title-input" name="title" type="text" maxlength="100" placeholder="Ex.: Preparar apresentação" required></div>
+      <div class="field"><label for="task-description-input">Descrição</label><textarea id="task-description-input" name="description" maxlength="500" placeholder="Detalhes da atividade (opcional)"></textarea></div>
+      <div class="dialog-actions"><button class="secondary-button" id="cancel-task" type="button">Cancelar</button><button class="primary-button" type="submit">Criar tarefa</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

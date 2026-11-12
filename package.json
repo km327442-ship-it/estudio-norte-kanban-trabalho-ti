@@ -1,0 +1,13 @@
+{
+  "name": "estudio-norte-kanban",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Quadro Kanban com API de autenticacao por sessao segura.",
+  "scripts": {
+    "start": "node server.js",
+    "password-hash": "node create-password-hash.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
