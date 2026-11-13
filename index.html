@@ -153,7 +153,13 @@
 
   <dialog id="members-dialog" aria-labelledby="members-title">
     <div class="dialog-content">
-      <div class="dialog-header"><div><h2 id="members-title">Membros do quadro</h2><p>Novas contas entram como leitoras. Administradores podem promover editores.</p></div><button class="close-button" id="close-members-dialog" type="button" aria-label="Fechar">&times;</button></div>
+      <div class="dialog-header"><div><h2 id="members-title">Membros do quadro</h2><p>Convide por e-mail e escolha o nível de acesso.</p></div><button class="close-button" id="close-members-dialog" type="button" aria-label="Fechar">&times;</button></div>
+      <form id="invite-form" class="invite-form">
+        <div class="field"><label for="invite-email">E-mail</label><input id="invite-email" name="email" type="email" autocomplete="email" required></div>
+        <div class="field"><label for="invite-role">Acesso</label><select id="invite-role" name="role"><option value="reader">Leitor</option><option value="editor">Editor</option><option value="owner">Proprietário</option></select></div>
+        <button class="primary-button" id="invite-submit" type="submit">Enviar convite</button>
+        <p id="invite-feedback" class="auth-feedback" role="status" aria-live="polite"></p>
+      </form>
       <div id="member-list" class="member-list"></div>
     </div>
   </dialog>

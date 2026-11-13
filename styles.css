@@ -161,6 +161,9 @@ dialog::backdrop { background: rgb(26 39 30 / 43%); backdrop-filter: blur(2px); 
 .member-handle { color: var(--muted); font-size: 10px; }
 .member-role, .member-role-select { color: #59685d; font-size: 11px; }
 .member-role-select { padding: 6px 8px; border: 1px solid #e1e7e0; border-radius: 5px; background: #fff; }
+.invite-form { display: grid; gap: 10px; margin: 0 0 14px; padding-bottom: 15px; border-bottom: 1px solid #e5e9e4; }
+.invite-form .field { margin: 0; }
+.invite-form .primary-button { justify-self: start; }
 .task-detail-view { width: min(920px, calc(100% - 48px)); margin: 38px auto 64px; }
 .detail-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 15px; border-bottom: 1px solid #dfe5de; }
 .detail-back { color: var(--green); font-size: 12px; font-weight: 650; text-decoration: none; }

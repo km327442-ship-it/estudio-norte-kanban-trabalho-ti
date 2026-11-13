@@ -8,13 +8,16 @@ import {
   doc,
   firebaseConfigured,
   getDoc,
+  isSignInWithEmailLink,
   onAuthStateChanged,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  sendSignInLinkToEmail,
   setDoc,
   signInWithEmailAndPassword,
+  signInWithEmailLink,
   signOut,
   updateDoc,
   updateProfile,
@@ -64,6 +67,11 @@ import {
   const mentionSuggestions = document.querySelector("#mention-suggestions");
   const memberList = document.querySelector("#member-list");
   const notificationList = document.querySelector("#notification-list");
+  const inviteForm = document.querySelector("#invite-form");
+  const inviteEmailInput = document.querySelector("#invite-email");
+  const inviteRoleInput = document.querySelector("#invite-role");
+  const inviteFeedback = document.querySelector("#invite-feedback");
+  const inviteButton = document.querySelector("#invite-submit");
   let currentUser = null;
   let currentMember = null;
   let editingTaskId = null;
@@ -86,8 +94,9 @@ import {
   function membersRef() { return collection(db, "boards", BOARD_ID, "members"); }
   function tasksRef() { return collection(db, "boards", BOARD_ID, "tasks"); }
   function memberRef(uid) { return doc(db, "boards", BOARD_ID, "members", uid); }
-  function canEdit() { return ["admin", "editor"].includes(currentMember?.role); }
-  function isAdmin() { return currentMember?.role === "admin"; }
+  function invitationRef(email) { return doc(db, "boards", BOARD_ID, "invitations", email.trim().toLowerCase()); }
+  function canEdit() { return ["owner", "admin", "editor"].includes(currentMember?.role); }
+  function isAdmin() { return ["owner", "admin"].includes(currentMember?.role); }
   function getRoute() {
     const match = window.location.pathname.match(/^\/board\/([^/]+)(?:\/task\/([^/]+))?\/?$/);
     if (!match || match[1] !== BOARD_ID) return { taskId: null };
@@ -157,7 +166,7 @@ import {
   function memberProfile(user, role) {
     const displayName = user.displayName || user.email?.split("@")[0] || "Usuário";
     const handle = makeHandle(user);
-    return { uid: user.uid, role, displayName, handle, photoURL: user.photoURL || "", joinedAt: serverTimestamp() };
+    return { uid: user.uid, email: user.email?.toLowerCase() || "", role, displayName, handle, photoURL: user.photoURL || "", joinedAt: serverTimestamp() };
   }
 
   function makeHandle(user) {
@@ -166,31 +175,58 @@ import {
   }
 
   async function ensureBoardMembership(user) {
-    const [boardSnapshot, memberSnapshot] = await Promise.all([getDoc(boardRef()), getDoc(memberRef(user.uid))]);
+    const email = user.email?.trim().toLowerCase() || "";
+    const [boardSnapshot, memberSnapshot, invitationSnapshot] = await Promise.all([
+      getDoc(boardRef()),
+      getDoc(memberRef(user.uid)),
+      email ? getDoc(invitationRef(email)) : Promise.resolve(null)
+    ]);
+    const invitation = invitationSnapshot?.exists() ? invitationSnapshot.data() : null;
+    const validInvite = user.emailVerified
+      && invitation?.email === email
+      && ["owner", "editor", "reader"].includes(invitation.role)
+      && !invitation.acceptedBy;
+    const profileUpdates = {
+      email,
+      displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
+      handle: makeHandle(user),
+      photoURL: user.photoURL || ""
+    };
     if (memberSnapshot.exists()) {
-      await updateDoc(memberRef(user.uid), {
-        displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
-        handle: makeHandle(user),
-        photoURL: user.photoURL || ""
-      });
+      if (validInvite) {
+        const batch = writeBatch(db);
+        batch.update(memberRef(user.uid), { ...profileUpdates, role: invitation.role });
+        batch.update(invitationRef(email), { acceptedBy: user.uid, acceptedAt: serverTimestamp() });
+        await batch.commit();
+      } else {
+        await updateDoc(memberRef(user.uid), profileUpdates);
+      }
       return;
     }
 
     if (!boardSnapshot.exists()) {
       const batch = writeBatch(db);
       batch.set(boardRef(), { name: "Meu quadro colaborativo", createdBy: user.uid, createdAt: serverTimestamp() });
-      batch.set(memberRef(user.uid), memberProfile(user, "admin"));
+      batch.set(memberRef(user.uid), memberProfile(user, "owner"));
       try {
         await batch.commit();
         return;
-      } catch {
+      } catch (error) {
         const [boardAfterRace, memberAfterRace] = await Promise.all([getDoc(boardRef()), getDoc(memberRef(user.uid))]);
-        if (!boardAfterRace.exists()) throw new Error("Não foi possível iniciar o quadro. Confira as regras do Firestore.");
+        if (!boardAfterRace.exists()) throw error;
         if (memberAfterRace.exists()) return;
       }
     }
 
-    await setDoc(memberRef(user.uid), memberProfile(user, "reader"));
+    if (validInvite) {
+      const batch = writeBatch(db);
+      batch.set(memberRef(user.uid), memberProfile(user, invitation.role));
+      batch.update(invitationRef(email), { acceptedBy: user.uid, acceptedAt: serverTimestamp() });
+      await batch.commit();
+      return;
+    }
+
+    throw Object.assign(new Error("Este quadro só pode ser acessado por convite."), { code: "board/invite-required" });
   }
 
   function subscribeToBoard(user) {
@@ -237,8 +273,20 @@ import {
     try {
       await ensureBoardMembership(user);
       subscribeToBoard(user);
-    } catch {
-      showLogin("Não foi possível acessar o quadro. Confira as regras e o projeto Firebase.");
+    } catch (error) {
+      console.error("Falha ao inicializar o quadro Firestore", error);
+      if (error?.code === "board/invite-required") {
+        try { await signOut(auth); } catch {}
+        showLogin("Este quadro é privado. Peça ao proprietário um convite para este e-mail.");
+        return;
+      }
+      const code = error?.code || "erro-desconhecido";
+      const message = code === "permission-denied"
+        ? "Login válido, mas o Firestore negou acesso. Publique firestore.rules no projeto Firebase correto."
+        : code === "unavailable"
+          ? "O Firestore está indisponível. Confira a conexão e se o banco foi criado."
+          : "Não foi possível abrir o quadro. Confira se o Firestore foi criado no projeto conectado.";
+      showLogin(`${message} (${code})`);
     }
   }
 
@@ -253,6 +301,18 @@ import {
     if (error.code === "permission-denied" || error.code === "firestore/permission-denied") return "Acesso negado pelo Firestore. Confira as regras publicadas.";
     if (error.code === "auth/configuration-not-found") return "Ative E-mail/senha no Firebase Authentication.";
     return action === "register" ? "Não foi possível criar a conta. Confira a configuração do Firebase." : "Não foi possível entrar. Confira a configuração do Firebase.";
+  }
+
+  async function completeEmailLinkSignIn() {
+    if (!isSignInWithEmailLink(auth, window.location.href)) return false;
+    let email = localStorage.getItem("kanban-email-link");
+    if (!email) email = window.prompt("Confirme o e-mail que recebeu o convite:") || "";
+    if (!email) throw new Error("É necessário informar o e-mail do convite.");
+
+    await signInWithEmailLink(auth, email.trim().toLowerCase(), window.location.href);
+    localStorage.removeItem("kanban-email-link");
+    history.replaceState({}, "", BOARD_PATH);
+    return true;
   }
 
   function createElement(tag, className, text) {
@@ -357,7 +417,7 @@ import {
   }
 
   function updateRoleControls() {
-    const roleLabel = { admin: "Administrador", editor: "Editor", reader: "Leitor" }[currentMember?.role] || "Sem acesso";
+    const roleLabel = { owner: "Proprietário", admin: "Proprietário", editor: "Editor", reader: "Leitor" }[currentMember?.role] || "Sem acesso";
     document.querySelector("#role-label").textContent = roleLabel;
     document.querySelector("#open-task-dialog").hidden = !canEdit();
     document.querySelector("#open-members-dialog").hidden = !isAdmin();
@@ -406,12 +466,12 @@ import {
         const roleSelect = document.createElement("select");
         roleSelect.className = "member-role-select";
         roleSelect.dataset.memberUid = member.uid;
-        [["editor", "Editor"], ["reader", "Leitor"]].forEach(([value, label]) => roleSelect.append(new Option(label, value)));
-        roleSelect.value = member.role === "editor" ? "editor" : "reader";
+        [["owner", "Proprietário"], ["editor", "Editor"], ["reader", "Leitor"]].forEach(([value, label]) => roleSelect.append(new Option(label, value)));
+        roleSelect.value = member.role === "admin" ? "owner" : member.role || "reader";
         roleSelect.setAttribute("aria-label", `Permissão de ${member.displayName || member.handle}`);
         row.append(roleSelect);
       } else {
-        row.append(createElement("span", "member-role", { admin: "Administrador", editor: "Editor", reader: "Leitor" }[member.role] || "Leitor"));
+        row.append(createElement("span", "member-role", { owner: "Proprietário", admin: "Proprietário", editor: "Editor", reader: "Leitor" }[member.role] || "Leitor"));
       }
       memberList.append(row);
     });
@@ -460,10 +520,9 @@ import {
       newValue,
       createdAt: serverTimestamp()
     };
-    await Promise.all([
-      addDoc(collection(db, "boards", BOARD_ID, "activity"), activity),
-      addDoc(taskActivityRef(task.id), activity)
-    ]);
+    const writes = [addDoc(collection(db, "boards", BOARD_ID, "activity"), activity)];
+    if (task.id) writes.push(addDoc(taskActivityRef(task.id), activity));
+    await Promise.all(writes);
   }
 
   async function sendNotifications(userIds, type, task, message) {
@@ -647,6 +706,7 @@ import {
       priority_changed: `alterou a prioridade de “${item.taskTitle}”: ${PRIORITY_LABELS[item.previousValue?.priority] || item.previousValue?.priority} → ${PRIORITY_LABELS[item.newValue?.priority] || item.newValue?.priority}`,
       edited: `editou “${item.taskTitle}”`,
       comment: `comentou em “${item.taskTitle}”`,
+      invited: `enviou convite para ${item.newValue?.email || "um novo membro"}`,
       role_changed: `alterou a permissão de um membro: ${item.previousValue} → ${item.newValue}`,
       deleted: `excluiu “${item.taskTitle}”`
     };
@@ -739,7 +799,7 @@ import {
     loginButton.querySelector("span").textContent = "Verificando...";
     setAuthFeedback();
     try {
-      await signInWithEmailAndPassword(auth, usernameInput.value.trim(), passwordInput.value);
+      await signInWithEmailAndPassword(auth, usernameInput.value.trim().toLowerCase(), passwordInput.value);
       loginForm.reset();
     } catch (error) {
       setAuthFeedback(authErrorMessage(error, "login"));
@@ -770,7 +830,7 @@ import {
     registerButton.querySelector("span").textContent = "Criando conta...";
     registerFeedback.textContent = "";
     try {
-      const credential = await createUserWithEmailAndPassword(auth, registerUsernameInput.value.trim(), registerPasswordInput.value);
+      const credential = await createUserWithEmailAndPassword(auth, registerUsernameInput.value.trim().toLowerCase(), registerPasswordInput.value);
       const displayName = registerDisplayNameInput.value.trim();
       if (displayName) {
         await updateProfile(credential.user, { displayName });
@@ -789,6 +849,53 @@ import {
     if (isAdmin()) document.querySelector("#members-dialog").showModal();
   });
   document.querySelector("#close-members-dialog").addEventListener("click", () => document.querySelector("#members-dialog").close());
+  inviteForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isAdmin() || !currentUser || !inviteForm.reportValidity()) return;
+    const email = inviteEmailInput.value.trim().toLowerCase();
+    const role = inviteRoleInput.value;
+    if (!["owner", "editor", "reader"].includes(role)) return;
+    if (email === currentUser.email?.toLowerCase()) {
+      inviteFeedback.textContent = "Você já é membro deste quadro.";
+      return;
+    }
+
+    inviteButton.disabled = true;
+    inviteButton.textContent = "Enviando convite...";
+    inviteFeedback.textContent = "";
+    try {
+      await setDoc(invitationRef(email), {
+        email,
+        role,
+        invitedBy: currentUser.uid,
+        inviterName: currentUser.displayName || currentUser.email || "Proprietário",
+        createdAt: serverTimestamp(),
+        acceptedBy: null,
+        acceptedAt: null
+      });
+      localStorage.setItem("kanban-email-link", email);
+      const continueUrl = new URL("/invite", window.location.origin);
+      continueUrl.searchParams.set("board", BOARD_ID);
+      await sendSignInLinkToEmail(auth, email, { url: continueUrl.toString(), handleCodeInApp: true });
+      inviteFeedback.textContent = `Convite enviado para ${email}. O acesso será de ${role === "owner" ? "proprietário" : role === "editor" ? "editor" : "leitor"}.`;
+      inviteFeedback.classList.add("is-success");
+      inviteForm.reset();
+      await writeActivity({ id: null, title: "Quadro colaborativo" }, "invited", null, { email, role });
+    } catch (error) {
+      inviteFeedback.classList.remove("is-success");
+      inviteFeedback.textContent = error.code === "auth/unauthorized-continue-uri"
+        ? "Autorize este domínio no Firebase Authentication antes de enviar convites."
+        : error.code === "auth/operation-not-allowed"
+          ? "Ative E-mail link no Firebase Authentication."
+          : error.code === "permission-denied"
+            ? "Somente o proprietário pode enviar convites. Confira as regras publicadas."
+            : "Não foi possível enviar o convite. Confira E-mail link e os domínios autorizados no Firebase.";
+    } finally {
+      inviteButton.disabled = false;
+      inviteButton.textContent = "Enviar convite";
+    }
+  });
+
   document.querySelector("#notification-button").addEventListener("click", () => {
     const panel = document.querySelector("#notification-panel");
     panel.hidden = !panel.hidden;
@@ -798,7 +905,7 @@ import {
     const uid = event.target.dataset.memberUid;
     const previousRole = members.find((member) => member.uid === uid)?.role;
     const newRole = event.target.value;
-    if (!uid || !["reader", "editor"].includes(newRole)) return;
+    if (!uid || !["owner", "reader", "editor"].includes(newRole)) return;
     try {
       await updateDoc(memberRef(uid), { role: newRole });
       const eventData = {
@@ -816,7 +923,7 @@ import {
       };
       await Promise.all([
         addDoc(collection(db, "boards", BOARD_ID, "activity"), eventData),
-        sendNotifications([uid], "role_changed", { id: null, title: "Quadro colaborativo" }, `Seu acesso foi alterado para ${newRole === "editor" ? "Editor" : "Leitor"}.`)
+        sendNotifications([uid], "role_changed", { id: null, title: "Quadro colaborativo" }, `Seu acesso foi alterado para ${{ owner: "Proprietário", editor: "Editor", reader: "Leitor" }[newRole]}.`)
       ]);
       showToast("Permissão atualizada.");
     } catch {
@@ -1015,9 +1122,17 @@ import {
     showRegisterButton.disabled = false;
     showLoginButton.disabled = false;
   } else {
-    onAuthStateChanged(auth, (user) => {
-      if (user) void enterApp(user);
-      else showLogin();
-    });
+    async function initializeAuth() {
+      try {
+        await completeEmailLinkSignIn();
+      } catch (error) {
+        showLogin(authErrorMessage(error, "login"));
+      }
+      onAuthStateChanged(auth, (user) => {
+        if (user) void enterApp(user);
+        else showLogin();
+      });
+    }
+    void initializeAuth();
   }
 })();

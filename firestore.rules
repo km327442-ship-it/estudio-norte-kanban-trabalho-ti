@@ -13,6 +13,10 @@ service cloud.firestore {
       return /databases/$(database)/documents/boards/$(boardId);
     }
 
+    function invitationPath(boardId, email) {
+      return /databases/$(database)/documents/boards/$(boardId)/invitations/$(email);
+    }
+
     function isMember(boardId, memberUid) {
       return signedIn() && exists(memberPath(boardId, memberUid));
     }
@@ -26,11 +30,35 @@ service cloud.firestore {
     }
 
     function canEdit(boardId) {
-      return hasRole(boardId, ['admin', 'editor']);
+      return hasRole(boardId, ['owner', 'admin', 'editor']);
     }
 
     function isAdmin(boardId) {
-      return hasRole(boardId, ['admin']);
+      return hasRole(boardId, ['owner', 'admin']);
+    }
+
+    function canInvite(boardId, role) {
+      return isAdmin(boardId) && role in ['owner', 'editor', 'reader']
+        || hasRole(boardId, ['editor']) && role in ['editor', 'reader'];
+    }
+
+    function validInvitation(boardId, email, data) {
+      return canInvite(boardId, data.role)
+        && data.keys().hasOnly(['email', 'role', 'invitedBy', 'inviterName', 'createdAt', 'acceptedBy', 'acceptedAt'])
+        && data.email == email
+        && data.invitedBy == request.auth.uid
+        && data.createdAt is timestamp
+        && data.acceptedBy == null
+        && data.acceptedAt == null;
+    }
+
+    function hasAcceptedInvitation(boardId, email, role) {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == email
+        && exists(invitationPath(boardId, email))
+        && getAfter(invitationPath(boardId, email)).data.role == role
+        && getAfter(invitationPath(boardId, email)).data.acceptedBy == request.auth.uid;
     }
 
     function validTask(boardId, taskId, data) {
@@ -57,7 +85,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['name', 'createdBy', 'createdAt'])
         && request.resource.data.createdBy == request.auth.uid
         && existsAfter(memberPath(boardId, request.auth.uid))
-        && getAfter(memberPath(boardId, request.auth.uid)).data.role == 'admin';
+        && getAfter(memberPath(boardId, request.auth.uid)).data.role == 'owner';
       allow update: if isAdmin(boardId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'updatedAt']);
       allow delete: if isAdmin(boardId);
@@ -66,23 +94,46 @@ service cloud.firestore {
         allow get: if signedIn() && (isBoardMember(boardId) || memberUid == request.auth.uid);
         allow list: if isBoardMember(boardId);
         allow create: if signedIn()
-          && request.resource.data.keys().hasOnly(['uid', 'role', 'displayName', 'handle', 'photoURL', 'joinedAt'])
+          && request.resource.data.keys().hasOnly(['uid', 'email', 'role', 'displayName', 'handle', 'photoURL', 'joinedAt'])
           && request.resource.data.uid == memberUid
+          && request.resource.data.email is string
           && request.resource.data.displayName is string
           && request.resource.data.handle is string
-          && (isAdmin(boardId) && request.resource.data.role in ['reader', 'editor']
-            || memberUid == request.auth.uid && request.resource.data.role == 'reader' && exists(boardPath(boardId))
-            || memberUid == request.auth.uid && request.resource.data.role == 'admin'
+          && (isAdmin(boardId) && request.resource.data.role in ['owner', 'reader', 'editor']
+            || memberUid == request.auth.uid && request.resource.data.role == 'owner'
+              && request.resource.data.email == request.auth.token.email
               && existsAfter(boardPath(boardId))
-              && getAfter(boardPath(boardId)).data.createdBy == request.auth.uid);
+              && getAfter(boardPath(boardId)).data.createdBy == request.auth.uid
+            || memberUid == request.auth.uid
+              && request.resource.data.email == request.auth.token.email
+              && hasAcceptedInvitation(boardId, request.auth.token.email, request.resource.data.role));
         allow update: if signedIn() && (
           isAdmin(boardId) && memberUid != request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
-            && request.resource.data.role in ['reader', 'editor']
+            && request.resource.data.role in ['owner', 'reader', 'editor']
           || memberUid == request.auth.uid && isBoardMember(boardId)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'handle', 'photoURL'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['email', 'displayName', 'handle', 'photoURL'])
+          || memberUid == request.auth.uid
+            && request.resource.data.email == request.auth.token.email
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'email', 'displayName', 'handle', 'photoURL'])
+            && hasAcceptedInvitation(boardId, request.auth.token.email, request.resource.data.role)
         );
         allow delete: if isAdmin(boardId) && memberUid != request.auth.uid;
+      }
+
+      match /invitations/{email} {
+        allow get: if isAdmin(boardId)
+          || signedIn() && email == request.auth.token.email;
+        allow list: if isAdmin(boardId);
+        allow create: if validInvitation(boardId, email, request.resource.data);
+        allow update: if validInvitation(boardId, email, request.resource.data)
+          || signedIn()
+            && resource.data.email == request.auth.token.email
+            && request.auth.token.email_verified == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acceptedBy', 'acceptedAt'])
+            && request.resource.data.acceptedBy == request.auth.uid
+            && request.resource.data.acceptedAt is timestamp;
+        allow delete: if isAdmin(boardId);
       }
 
       match /tasks/{taskId} {
