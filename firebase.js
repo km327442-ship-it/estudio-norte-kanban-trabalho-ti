@@ -2,8 +2,11 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/fireba
 import {
   createUserWithEmailAndPassword,
   getAuth,
+  isSignInWithEmailLink,
   onAuthStateChanged,
+  sendSignInLinkToEmail,
   signInWithEmailAndPassword,
+  signInWithEmailLink,
   signOut,
   updateProfile
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
@@ -58,13 +61,16 @@ export {
   doc,
   getDoc,
   getDocs,
+  isSignInWithEmailLink,
   onAuthStateChanged,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  sendSignInLinkToEmail,
   setDoc,
   signInWithEmailAndPassword,
+  signInWithEmailLink,
   signOut,
   updateDoc,
   updateProfile,
