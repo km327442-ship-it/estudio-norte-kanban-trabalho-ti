@@ -36,6 +36,8 @@ Nao abra por `file:///`. O Live Server normalmente usa `http://localhost:5500`; 
 
 Contas e sessões são do Firebase Authentication. O quadro compartilhado fica em `boards/quadro-principal`; tarefas, comentários, membros, convites, notificações e atividade usam documentos e subcoleções do Firestore. `onSnapshot` mantém as telas atualizadas em tempo real. Uma conta sem convite não entra no quadro. Um leitor pode consultar, mas o Firestore rejeita suas tentativas de escrita mesmo se forem feitas fora da interface.
 
+Cada conta nova recebe automaticamente um servidor privado em `boards/private-{uid}`. Somente o proprietário dessa conta cria o servidor privado na primeira entrada; o proprietário pode convidar outros usuários por e-mail. Convites abertos em outro domínio continuam vinculados ao quadro indicado no link.
+
 O proprietário abre **Membros**, informa o email e escolhe **Proprietário**, **Editor** ou **Leitor** antes de enviar o convite. O Firebase envia um link de autenticação; o papel só é aplicado depois que o destinatário abre o link e verifica o endereço. No mesmo dispositivo, o app usa o email salvo durante o envio; em outro dispositivo, o destinatário precisa confirmar o email. Para membros existentes, o proprietário pode mudar o papel no seletor. Os cards mostram responsável, avatar/iniciais, prioridade e data de entrega. Clique no título para abrir `/board/quadro-principal/task/{id}` em nova aba. Detalhes, comentários, menções e histórico continuam disponíveis após atualizar a página.
 
 O convite usa o modelo email-link do Firebase Authentication. Personalize o assunto e o texto em **Authentication > Templates** se quiser mencionar o nome do quadro no email.

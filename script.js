@@ -30,8 +30,8 @@ import {
   const STATUSES = ["todo", "doing", "done"];
   const STATUS_LABELS = { todo: "A Fazer", doing: "Em Andamento", done: "Concluído" };
   const PRIORITY_LABELS = { low: "Baixa", normal: "Normal", high: "Alta" };
-  const BOARD_ID = "quadro-principal";
-  const BOARD_PATH = `/board/${BOARD_ID}`;
+  let BOARD_ID = "quadro-principal";
+  let BOARD_PATH = `/board/${BOARD_ID}`;
   const loginView = document.querySelector("#login-view");
   const appView = document.querySelector("#app-view");
   const loginPanel = document.querySelector("#login-panel");
@@ -60,8 +60,10 @@ import {
   const taskDueDateInput = document.querySelector("#task-due-date-input");
   const toast = document.querySelector("#toast");
   const taskDetailView = document.querySelector("#task-detail-view");
-  const taskCommentsList = document.querySelector("#task-comments");
-  const activityList = document.querySelector("#task-activity");
+  const taskCommentsList = createElement("div", "detail-comments", "");
+  taskCommentsList.id = "task-comments";
+  const activityList = createElement("div", "detail-activity", "");
+  activityList.id = "task-activity";
   const commentForm = document.querySelector("#comment-form");
   const commentInput = document.querySelector("#comment-input");
   const mentionSuggestions = document.querySelector("#mention-suggestions");
@@ -90,6 +92,15 @@ import {
   let unsubscribeComments = null;
   let unsubscribeActivity = null;
 
+  function privateBoardId(uid) {
+    return `private-${uid}`;
+  }
+
+  function setActiveBoard(boardId) {
+    BOARD_ID = boardId || "quadro-principal";
+    BOARD_PATH = `/board/${BOARD_ID}`;
+  }
+
   function boardRef() { return doc(db, "boards", BOARD_ID); }
   function membersRef() { return collection(db, "boards", BOARD_ID, "members"); }
   function tasksRef() { return collection(db, "boards", BOARD_ID, "tasks"); }
@@ -99,8 +110,9 @@ import {
   function isAdmin() { return ["owner", "admin"].includes(currentMember?.role); }
   function getRoute() {
     const match = window.location.pathname.match(/^\/board\/([^/]+)(?:\/task\/([^/]+))?\/?$/);
-    if (!match || match[1] !== BOARD_ID) return { taskId: null };
-    return { taskId: match[2] || null };
+    if (!match) return { boardId: BOARD_ID, taskId: null };
+    setActiveBoard(match[1]);
+    return { boardId: match[1], taskId: match[2] || null };
   }
 
   function stopListeners() {
@@ -271,6 +283,12 @@ import {
     document.querySelector("#user-name").textContent = user.displayName || user.email || user.uid;
     setAuthFeedback();
     try {
+      const routeBoardId = getRoute().boardId;
+      const storedBoardId = localStorage.getItem("kanban-board-id");
+      setActiveBoard(routeBoardId && window.location.pathname.startsWith("/board/")
+        ? routeBoardId
+        : storedBoardId || privateBoardId(user.uid));
+      localStorage.removeItem("kanban-board-id");
       await ensureBoardMembership(user);
       subscribeToBoard(user);
     } catch (error) {
@@ -311,7 +329,11 @@ import {
 
     await signInWithEmailLink(auth, email.trim().toLowerCase(), window.location.href);
     localStorage.removeItem("kanban-email-link");
-    history.replaceState({}, "", BOARD_PATH);
+    const linkBoardId = new URL(window.location.href).searchParams.get("board");
+    const destinationBoardId = linkBoardId || privateBoardId(auth.currentUser?.uid || "");
+    if (linkBoardId) localStorage.setItem("kanban-board-id", linkBoardId);
+    setActiveBoard(destinationBoardId);
+    history.replaceState({}, "", `/board/${destinationBoardId}`);
     return true;
   }
 

@@ -13,6 +13,11 @@ service cloud.firestore {
       return /databases/$(database)/documents/boards/$(boardId);
     }
 
+    function isPrivateBoardOwnerBoard(boardId) {
+      return signedIn()
+        && boardId == 'private-' + request.auth.uid;
+    }
+
     function invitationPath(boardId, email) {
       return /databases/$(database)/documents/boards/$(boardId)/invitations/$(email);
     }
@@ -81,7 +86,7 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if isBoardMember(boardId);
       allow create: if signedIn()
-        && boardId == 'quadro-principal'
+        && (boardId == 'quadro-principal' || isPrivateBoardOwnerBoard(boardId))
         && request.resource.data.keys().hasOnly(['name', 'createdBy', 'createdAt'])
         && request.resource.data.createdBy == request.auth.uid
         && existsAfter(memberPath(boardId, request.auth.uid))
