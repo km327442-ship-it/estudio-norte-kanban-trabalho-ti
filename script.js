@@ -326,16 +326,22 @@ import {
   }
 
   function authErrorMessage(error, action) {
-    if (error.code === "auth/email-already-in-use") return "Este e-mail já possui uma conta. Entre com ela.";
-    if (error.code === "auth/invalid-email") return "Informe um endereço de e-mail válido.";
-    if (error.code === "auth/invalid-credential" || error.code === "auth/user-not-found" || error.code === "auth/wrong-password") return "E-mail ou senha inválidos.";
-    if (error.code === "auth/weak-password") return "A senha deve ter pelo menos 6 caracteres.";
-    if (error.code === "auth/operation-not-allowed") return "Ative o método E-mail/senha no Firebase Authentication.";
-    if (error.code === "auth/too-many-requests") return "Muitas tentativas. Aguarde e tente novamente.";
-    if (error.code === "auth/network-request-failed") return "Sem conexão com o Firebase. Verifique a rede e tente novamente.";
-    if (error.code === "permission-denied" || error.code === "firestore/permission-denied") return "Acesso negado pelo Firestore. Confira as regras publicadas.";
-    if (error.code === "auth/configuration-not-found") return "Ative E-mail/senha no Firebase Authentication.";
-    return action === "register" ? "Não foi possível criar a conta. Confira a configuração do Firebase." : "Não foi possível entrar. Confira a configuração do Firebase.";
+    const code = error?.code || "";
+    if (code === "auth/email-already-in-use") return "Este e-mail já possui uma conta. Entre com ela.";
+    if (code === "auth/invalid-email") return "Informe um endereço de e-mail válido.";
+    if (code === "auth/invalid-credential" || code === "auth/user-not-found" || code === "auth/wrong-password") return "E-mail ou senha inválidos.";
+    if (code === "auth/weak-password") return "A senha deve ter pelo menos 6 caracteres.";
+    if (code === "auth/operation-not-allowed" || code === "auth/configuration-not-found") return "Ative o método E-mail/senha no Firebase Authentication.";
+    if (code === "auth/too-many-requests") return "Muitas tentativas. Aguarde e tente novamente.";
+    if (code === "auth/network-request-failed") return "Sem conexão com o Firebase. Verifique a rede e tente novamente.";
+    if (code === "auth/invalid-api-key" || code === "auth/api-key-not-valid") return "A Web API key em firebase-config.js é inválida. Copie a chave do app Web nas configurações do projeto Firebase.";
+    if (code === "auth/unauthorized-domain") return `O domínio ${window.location.hostname} não está autorizado no Firebase Authentication.`;
+    if (code === "auth/app-not-authorized") return "Este app não está autorizado a usar o Firebase Authentication. Confira a Web API key e as restrições da chave no Google Cloud.";
+    if (code === "permission-denied" || code === "firestore/permission-denied") return "Acesso negado pelo Firestore. Confira as regras publicadas.";
+    const actionMessage = action === "register" ? "Não foi possível criar a conta" : "Não foi possível entrar";
+    return code
+      ? `${actionMessage}. Código do Firebase: ${code}.`
+      : `${actionMessage}. Confira a configuração do Firebase.`;
   }
 
   async function completeEmailLinkSignIn() {
