@@ -60,6 +60,11 @@ import {
   const taskDueDateInput = document.querySelector("#task-due-date-input");
   const toast = document.querySelector("#toast");
   const taskDetailView = document.querySelector("#task-detail-view");
+  const aiChatPanel = document.querySelector("#ai-chat-panel");
+  const aiChatMessages = document.querySelector("#ai-chat-messages");
+  const aiChatForm = document.querySelector("#ai-chat-form");
+  const aiChatInput = document.querySelector("#ai-chat-input");
+  const aiChatSubmit = document.querySelector("#ai-chat-submit");
   const taskCommentsList = createElement("div", "detail-comments", "");
   taskCommentsList.id = "task-comments";
   const activityList = createElement("div", "detail-activity", "");
@@ -84,6 +89,8 @@ import {
   let activeActivity = [];
   let boardActivity = [];
   let activeDetailTaskId = null;
+  let aiChatHistory = [];
+  const taskBreakdowns = new Map();
   let toastTimer;
   let unsubscribeTasks = null;
   let unsubscribeBoardActivity = null;
@@ -97,7 +104,13 @@ import {
   }
 
   function setActiveBoard(boardId) {
-    BOARD_ID = boardId || "quadro-principal";
+    const nextBoardId = boardId || "quadro-principal";
+    if (nextBoardId !== BOARD_ID) {
+      aiChatHistory = [];
+      taskBreakdowns.clear();
+      aiChatMessages?.replaceChildren();
+    }
+    BOARD_ID = nextBoardId;
     BOARD_PATH = `/board/${BOARD_ID}`;
   }
 
@@ -142,10 +155,14 @@ import {
     boardActivity = [];
     activeComments = [];
     activeActivity = [];
+    aiChatHistory = [];
+    taskBreakdowns.clear();
+    aiChatMessages.replaceChildren();
     loginView.hidden = false;
     appView.hidden = true;
     taskDetailView.hidden = true;
     taskDetailView.replaceChildren();
+    aiChatPanel.hidden = true;
     loginPanel.hidden = false;
     registerPanel.hidden = true;
     document.title = "Entrar | Estúdio Norte";
@@ -525,6 +542,84 @@ import {
     toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2400);
   }
 
+  function appendAiMessage(text, role, isError = false, isPending = false) {
+    const message = createElement("div", `ai-chat-message${role === "user" ? " is-user" : ""}${isError ? " is-error" : ""}${isPending ? " is-pending" : ""}`, text);
+    aiChatMessages.append(message);
+    aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
+    return message;
+  }
+
+  async function requestProjectAi(question, options = {}) {
+    if (!currentUser) throw new Error("Entre na sua conta para perguntar ao projeto.");
+    const token = await currentUser.getIdToken();
+    const response = await fetch("/api/ai/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        boardId: BOARD_ID,
+        question,
+        mode: options.mode || "chat",
+        taskId: options.taskId || null,
+        history: options.history || []
+      })
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result?.error || "Não foi possível consultar a IA agora.");
+    if (typeof result?.answer !== "string" || !result.answer.trim()) {
+      throw new Error("A IA não retornou uma resposta válida.");
+    }
+    return result.answer.trim();
+  }
+
+  async function generateTaskBreakdown(task, button, result) {
+    const state = { status: "pending", answer: "Preparando uma checklist..." };
+    taskBreakdowns.set(task.id, state);
+    button.disabled = true;
+    result.hidden = false;
+    result.textContent = state.answer;
+    try {
+      state.answer = await requestProjectAi("Quebre esta tarefa em subtarefas pequenas, verificáveis e em ordem de execução.", {
+        mode: "breakdown",
+        taskId: task.id
+      });
+      state.status = "done";
+    } catch (error) {
+      state.status = "error";
+      state.answer = error.message;
+    } finally {
+      button.disabled = false;
+      if (result.isConnected) result.textContent = state.answer;
+    }
+  }
+
+  async function submitAiQuestion(question) {
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion || !currentUser || aiChatSubmit.disabled) return;
+    aiChatInput.value = "";
+    appendAiMessage(trimmedQuestion, "user");
+    const priorHistory = aiChatHistory.slice(-8);
+    aiChatHistory.push({ role: "user", text: trimmedQuestion });
+    aiChatSubmit.disabled = true;
+    const pending = appendAiMessage("Consultando as tarefas do quadro...", "model", false, true);
+    try {
+      const answer = await requestProjectAi(trimmedQuestion, { history: priorHistory });
+      pending.remove();
+      appendAiMessage(answer, "model");
+      aiChatHistory.push({ role: "model", text: answer });
+      aiChatHistory = aiChatHistory.slice(-8);
+    } catch (error) {
+      pending.remove();
+      appendAiMessage(error.message, "model", true);
+      aiChatHistory.pop();
+    } finally {
+      aiChatSubmit.disabled = false;
+      aiChatInput.focus();
+    }
+  }
+
   function taskRef(taskId) { return doc(db, "boards", BOARD_ID, "tasks", taskId); }
   function taskCommentsRef(taskId) { return collection(db, "boards", BOARD_ID, "tasks", taskId, "comments"); }
   function taskActivityRef(taskId) { return collection(db, "boards", BOARD_ID, "tasks", taskId, "activity"); }
@@ -633,7 +728,10 @@ import {
       try { await navigator.clipboard.writeText(new URL(taskHref(task.id), location.origin).href); showToast("Link copiado."); }
       catch { showToast("Não foi possível copiar o link neste navegador."); }
     });
-    header.append(back, copyLink);
+    const askProject = createElement("button", "secondary-button ai-chat-toggle", "Pergunte ao projeto");
+    askProject.type = "button";
+    askProject.setAttribute("aria-controls", "ai-chat-panel");
+    header.append(back, askProject, copyLink);
     const article = createElement("article", "detail-article");
     article.append(createElement("p", "eyebrow", "Tarefa do quadro"));
     article.append(createElement("h1", "detail-title", task.title));
@@ -651,6 +749,18 @@ import {
       edit.addEventListener("click", () => openTaskEditor(task));
       article.append(edit);
     }
+    const breakdown = createElement("button", "secondary-button ai-breakdown-button", "Quebrar em subtasks");
+    breakdown.type = "button";
+    const breakdownResult = createElement("div", "ai-breakdown-result");
+    breakdownResult.setAttribute("aria-live", "polite");
+    const breakdownState = taskBreakdowns.get(task.id);
+    breakdownResult.hidden = !breakdownState;
+    if (breakdownState) {
+      breakdown.disabled = breakdownState.status === "pending";
+      breakdownResult.textContent = breakdownState.answer;
+    }
+    breakdown.addEventListener("click", () => void generateTaskBreakdown(task, breakdown, breakdownResult));
+    article.append(breakdown, breakdownResult);
     const commentsSection = createElement("section", "detail-section");
     commentsSection.append(createElement("h2", "section-title", `Comentários (${activeComments.length})`));
     commentsSection.append(taskCommentsList);
@@ -982,6 +1092,30 @@ import {
       mentionSuggestions.hidden = true;
     } catch {
       showToast("Não foi possível publicar o comentário. Confira as permissões do quadro.");
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (event.target.closest(".ai-chat-toggle")) {
+      aiChatPanel.hidden = false;
+      aiChatInput.focus();
+    }
+  });
+  document.querySelector("#close-ai-chat").addEventListener("click", () => { aiChatPanel.hidden = true; });
+  document.querySelectorAll("[data-ai-question]").forEach((button) => {
+    button.addEventListener("click", () => {
+      aiChatPanel.hidden = false;
+      void submitAiQuestion(button.dataset.aiQuestion);
+    });
+  });
+  aiChatForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitAiQuestion(aiChatInput.value);
+  });
+  aiChatInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      aiChatForm.requestSubmit();
     }
   });
 

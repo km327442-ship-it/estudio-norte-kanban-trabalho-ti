@@ -46,13 +46,18 @@ Os dados da versão antiga em `localStorage` não são migrados automaticamente.
 
 ## Deploy no Netlify
 
-O arquivo `netlify.toml` define o diretório publicado e reescreve `/board/*` para `index.html`, permitindo recarregar links de tarefas diretamente.
+O arquivo `netlify.toml` define o diretório publicado, reescreve `/board/*` para `index.html` e encaminha `/api/ai/chat` à função protegida do assistente.
 
 1. Faça o bootstrap da conta proprietária em local antes de publicar, conforme a seção anterior.
 2. No Netlify, escolha **Add new site > Import an existing project** e conecte o repositório GitHub.
-3. Use a raiz do projeto. `netlify.toml` configura a publicação estática; deixe o comando de build vazio.
+3. Use a raiz do projeto. `netlify.toml` configura o site e a função Netlify.
 4. Após o deploy, adicione o domínio `*.netlify.app` em **Firebase Authentication > Settings > Authorized domains**.
-5. Teste com duas contas: envie um convite por email como editor/leitor, aceite o link e confira as regras, tarefas, comentários, menções e URLs diretas.
+5. Em **Site configuration > Environment variables**, configure `GEMINI_API_KEY` (chave do Google AI Studio), `FIREBASE_API_KEY` (Web API key do Firebase) e `FIREBASE_PROJECT_ID`. Opcionalmente, configure `GEMINI_MODEL`; o padrão é `gemini-2.5-flash`.
+6. Teste com duas contas: envie um convite por email como editor/leitor, aceite o link e confira o assistente, as regras, tarefas, comentários, menções e URLs diretas.
+
+O assistente valida a sessão, lê tarefas e membros do Firestore usando o token do usuário e só então envia os dados mínimos ao Gemini. A chave `GEMINI_API_KEY` fica apenas nas variáveis do servidor e nunca deve ser colocada em `script.js` ou `firebase-config.js`.
+
+Para executar localmente, instale/execute a Netlify CLI e use `netlify dev` na raiz do projeto; o Live Server sozinho não executa funções serverless. Para Firebase Hosting, o chat precisa de um backend equivalente, pois o Hosting estático não publica esta função Netlify.
 
 O deploy público exige acesso ao repositório e à conta Netlify; não foi executado a partir deste workspace.
 

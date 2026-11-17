@@ -1,5 +1,11 @@
 [build]
   publish = "."
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/ai/chat"
+  to = "/.netlify/functions/ai-chat"
+  status = 200
 
 [[redirects]]
   from = "/board/*"
