@@ -14,6 +14,9 @@ const PRIORITY_LABELS = {
   high: "Alta"
 };
 
+const FIREBASE_PROJECT_ID = "trabalho-f0b93";
+const GROQ_MODEL = "openai/gpt-oss-120b";
+
 // ======================================================
 // RESPOSTAS HTTP
 // ======================================================
@@ -74,11 +77,11 @@ async function lookupUser(token, apiKey) {
 // FIRESTORE
 // ======================================================
 
-function firestoreUrl(projectId, path, query = "") {
-  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${path}${query}`;
+function firestoreUrl(path, query = "") {
+  return `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${path}${query}`;
 }
 
-async function listDocuments(projectId, path, token) {
+async function listDocuments(path, token) {
   const documents = [];
   let pageToken = "";
 
@@ -92,7 +95,7 @@ async function listDocuments(projectId, path, token) {
     }
 
     const response = await fetch(
-      firestoreUrl(projectId, path, `?${query}`),
+      firestoreUrl(path, `?${query}`),
       {
         headers: {
           Authorization: `Bearer ${token}`
@@ -210,40 +213,36 @@ ${JSON.stringify(history)}
 PERGUNTA:
 ${question}`;
 
-  // Modelo Groq
-  const model =
-    process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+  const response = await fetch(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      method: "POST",
 
-  const endpoint =
-    "https://api.groq.com/openai/v1/chat/completions";
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
 
-  const response = await fetch(endpoint, {
-    method: "POST",
+      body: JSON.stringify({
+        model: GROQ_MODEL,
 
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
+        messages: [
+          {
+            role: "system",
+            content: systemInstruction
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
 
-    body: JSON.stringify({
-      model,
+        temperature: 0.2,
 
-      messages: [
-        {
-          role: "system",
-          content: systemInstruction
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-
-      temperature: 0.2,
-
-      max_completion_tokens: 1000
-    })
-  });
+        max_completion_tokens: 1000
+      })
+    }
+  );
 
   if (!response.ok) {
     const errorDetails = await response.text();
@@ -270,7 +269,6 @@ ${question}`;
 
 export default async function handler(request) {
 
-  // Verifica método HTTP
   if (request.method !== "POST") {
     return jsonResponse(405, {
       error: "Método não permitido."
@@ -279,20 +277,16 @@ export default async function handler(request) {
 
   // Variáveis de ambiente
   const apiKey = process.env.GROQ_API_KEY;
-
   const firebaseApiKey = process.env.FIREBASE_API_KEY;
 
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-
-  // Verifica configuração
-  if (!apiKey || !firebaseApiKey || !projectId) {
+  if (!apiKey || !firebaseApiKey) {
     return jsonResponse(503, {
       error: "O serviço de IA ainda não está configurado no servidor."
     });
   }
 
   // ====================================================
-  // AUTENTICAÇÃO DO USUÁRIO
+  // AUTENTICAÇÃO
   // ====================================================
 
   const authorization =
@@ -359,7 +353,7 @@ export default async function handler(request) {
       : [];
 
   // ====================================================
-  // VALIDAÇÃO DOS DADOS
+  // VALIDAÇÃO
   // ====================================================
 
   if (
@@ -396,7 +390,6 @@ export default async function handler(request) {
 
   try {
 
-    // Valida usuário no Firebase
     const user = await lookupUser(
       tokenMatch[1],
       firebaseApiKey
@@ -408,15 +401,12 @@ export default async function handler(request) {
       });
     }
 
-    // ==================================================
-    // VERIFICA SE O USUÁRIO TEM ACESSO AO QUADRO
-    // ==================================================
-
+    // Verifica acesso ao quadro
     const memberPath =
       `boards/${encodeURIComponent(boardId)}/members/${encodeURIComponent(user.localId)}`;
 
     const membershipResponse = await fetch(
-      firestoreUrl(projectId, memberPath),
+      firestoreUrl(memberPath),
       {
         headers: {
           Authorization: `Bearer ${tokenMatch[1]}`
@@ -437,31 +427,23 @@ export default async function handler(request) {
       throw new Error("membership-check-failed");
     }
 
-    // ==================================================
-    // BUSCA TAREFAS E MEMBROS
-    // ==================================================
-
+    // Busca tarefas e membros
     const [taskDocuments, memberDocuments] =
       await Promise.all([
 
         listDocuments(
-          projectId,
           `boards/${encodeURIComponent(boardId)}/tasks`,
           tokenMatch[1]
         ),
 
         listDocuments(
-          projectId,
           `boards/${encodeURIComponent(boardId)}/members`,
           tokenMatch[1]
         )
 
       ]);
 
-    // ==================================================
-    // ORGANIZA MEMBROS
-    // ==================================================
-
+    // Organiza membros
     const membersByUid = new Map(
       memberDocuments.map(document => {
 
@@ -478,10 +460,7 @@ export default async function handler(request) {
       })
     );
 
-    // ==================================================
-    // ORGANIZA TAREFAS
-    // ==================================================
-
+    // Organiza tarefas
     const assignedTasks = new Map();
 
     const tasks = taskDocuments.map(document => {
@@ -505,10 +484,7 @@ export default async function handler(request) {
 
     });
 
-    // ==================================================
-    // MODO CHECKLIST
-    // ==================================================
-
+    // Modo checklist
     const task =
       mode === "breakdown"
         ? tasks.find(item => item.id === taskId)
@@ -520,10 +496,7 @@ export default async function handler(request) {
       });
     }
 
-    // ==================================================
-    // CARGA DE TRABALHO DOS MEMBROS
-    // ==================================================
-
+    // Carga de trabalho
     const workload = [
       ...membersByUid.entries()
     ].map(([uid, name]) => ({
@@ -535,47 +508,26 @@ export default async function handler(request) {
 
     }));
 
-    // ==================================================
-    // DADOS DO PROJETO PARA A IA
-    // ==================================================
-
+    // Dados do projeto
     const projectData = {
-
       tasks,
-
       members: workload,
-
       taskCount: tasks.length
-
     };
 
-    // ==================================================
-    // CONSULTA AO GROQ
-    // ==================================================
-
+    // Consulta ao Groq
     const answer = await generateAnswer({
-
       mode,
-
       question,
-
       history,
-
       task,
-
       projectData,
-
       apiKey
-
     });
 
     if (!answer) {
       throw new Error("empty-ai-response");
     }
-
-    // ==================================================
-    // RESPOSTA FINAL
-    // ==================================================
 
     return jsonResponse(200, {
       answer
